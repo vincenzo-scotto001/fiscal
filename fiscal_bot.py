@@ -45,25 +45,30 @@ MIN_REVENUE_ESTIMATE = 1_000_000_000  # $1B
 MAX_PER_SESSION_WEEK = 12
 MAX_PER_SESSION_DAY = 15
 
-# Key US economic releases, matched against FRED's release names (lower case).
-# A plain pattern must match the START of the name; a pattern beginning with * can appear anywhere.
-# (pattern, label shown in Discord, usual release time ET, show in the Sunday preview)
+# Key US economic releases, matched by their exact FRED release name (run `check` to list names).
+# (FRED release name, label shown in Discord, usual release time ET, show in the Sunday preview)
+# Entries marked False only appear in the weekday morning brief.
 KEY_RELEASES = [
-    ("employment situation", "Jobs Report (Nonfarm Payrolls)", "8:30 AM", True),
-    ("consumer price index", "CPI Inflation", "8:30 AM", True),
-    ("producer price index", "PPI Inflation", "8:30 AM", True),
-    ("personal income and outlays", "PCE Inflation & Spending", "8:30 AM", True),
-    ("gross domestic product", "GDP", "8:30 AM", True),
-    ("advance monthly sales for retail", "Retail Sales", "8:30 AM", True),
-    ("job openings and labor turnover", "JOLTS Job Openings", "10:00 AM", True),
-    ("*surveys of consumers", "UMich Consumer Sentiment", "10:00 AM", True),
-    ("new residential construction", "Housing Starts", "8:30 AM", True),
-    ("*industrial production and capacity utilization", "Industrial Production", "9:15 AM", False),
-    ("unemployment insurance weekly claims", "Weekly Jobless Claims", "8:30 AM", True),
-    ("adp national employment report", "ADP Private Payrolls", "8:15 AM", True),
-    ("new residential sales", "New Home Sales", "10:00 AM", False),
-    # Durable Goods / Factory Orders share one FRED release and are handled in match_release().
+    ("Employment Situation", "Jobs Report (Nonfarm Payrolls)", "8:30 AM", True),
+    ("Consumer Price Index", "CPI Inflation", "8:30 AM", True),
+    ("Producer Price Index", "PPI Inflation", "8:30 AM", True),
+    ("Personal Income and Outlays", "PCE Inflation & Spending", "8:30 AM", True),
+    ("Gross Domestic Product", "GDP", "8:30 AM", True),
+    ("Advance Monthly Sales for Retail and Food Services", "Retail Sales", "8:30 AM", True),
+    ("Job Openings and Labor Turnover Survey", "JOLTS Job Openings", "10:00 AM", True),
+    ("ADP National Employment Report", "ADP Private Payrolls", "8:15 AM", True),
+    ("Unemployment Insurance Weekly Claims Report", "Weekly Jobless Claims", "8:30 AM", True),
+    ("Surveys of Consumers", "UMich Consumer Sentiment", "10:00 AM", True),
+    ("New Residential Construction", "Housing Starts", "8:30 AM", True),
+    ("G.17 Industrial Production and Capacity Utilization", "Industrial Production", "9:15 AM", False),
+    ("New Residential Sales", "New Home Sales", "10:00 AM", False),
+    ("Existing Home Sales", "Existing Home Sales", "10:00 AM", False),
+    ("U.S. International Trade in Goods and Services", "Trade Balance", "8:30 AM", False),
+    ("Empire State Manufacturing Survey", "Empire State Manufacturing", "8:30 AM", False),
+    ("Manufacturing Business Outlook Survey", "Philly Fed Manufacturing", "8:30 AM", False),
 ]
+# The Census M3 report covers both durable goods and factory orders; see match_release().
+M3_RELEASE = "Manufacturer's Shipments, Inventories, and Orders (M3) Survey"
 
 # FOMC rate-decision days (statement 2:00 PM ET, press conference 2:30 PM ET).
 # Source: federalreserve.gov/monetarypolicy/fomccalendars.htm - update once a year.
@@ -396,18 +401,15 @@ def fred_release_dates(start: dt.date, end: dt.date, today: dt.date) -> list[dic
 
 
 def match_release(name: str, date: str = ""):
-    n = name.lower().strip()
-    if " by " in n:  # skip regional splits like "GDP by State"
-        return None
-    if "shipments, inventories, and orders" in n:
-        # Census M3 report: the advance durable goods report comes out in the second half
-        # of the month, the full factory orders report early in the following month.
+    n = name.strip().lower()
+    if n == M3_RELEASE.lower():
+        # The advance durable goods report comes out in the second half of the month,
+        # the full factory orders report early in the following month.
         if date and dt.date.fromisoformat(date).day >= 15:
             return "Durable Goods Orders", "8:30 AM", True
         return "Factory Orders", "10:00 AM", False
-    for pattern, label, when, weekly in KEY_RELEASES:
-        hit = pattern[1:] in n if pattern.startswith("*") else n.startswith(pattern)
-        if hit:
+    for fred_name, label, when, weekly in KEY_RELEASES:
+        if n == fred_name.lower():
             return label, when, weekly
     return None
 
