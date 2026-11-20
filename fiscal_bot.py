@@ -59,9 +59,10 @@ KEY_RELEASES = [
     ("*surveys of consumers", "UMich Consumer Sentiment", "10:00 AM", True),
     ("new residential construction", "Housing Starts", "8:30 AM", True),
     ("*industrial production and capacity utilization", "Industrial Production", "9:15 AM", False),
-    ("*durable goods", "Durable Goods Orders", "8:30 AM", True),
-    ("manufacturers' shipments, inventories", "Factory Orders", "10:00 AM", False),
     ("unemployment insurance weekly claims", "Weekly Jobless Claims", "8:30 AM", True),
+    ("adp national employment report", "ADP Private Payrolls", "8:15 AM", True),
+    ("new residential sales", "New Home Sales", "10:00 AM", False),
+    # Durable Goods / Factory Orders share one FRED release and are handled in match_release().
 ]
 
 # FOMC rate-decision days (statement 2:00 PM ET, press conference 2:30 PM ET).
@@ -394,10 +395,16 @@ def fred_release_dates(start: dt.date, end: dt.date, today: dt.date) -> list[dic
     return [r for r in out if iso(start) <= r.get("date", "") <= iso(end)]
 
 
-def match_release(name: str):
+def match_release(name: str, date: str = ""):
     n = name.lower().strip()
     if " by " in n:  # skip regional splits like "GDP by State"
         return None
+    if "shipments, inventories, and orders" in n:
+        # Census M3 report: the advance durable goods report comes out in the second half
+        # of the month, the full factory orders report early in the following month.
+        if date and dt.date.fromisoformat(date).day >= 15:
+            return "Durable Goods Orders", "8:30 AM", True
+        return "Factory Orders", "10:00 AM", False
     for pattern, label, when, weekly in KEY_RELEASES:
         hit = pattern[1:] in n if pattern.startswith("*") else n.startswith(pattern)
         if hit:
@@ -425,7 +432,7 @@ def macro_events(start: dt.date, end: dt.date, today: dt.date) -> dict[str, list
     events: dict[str, list[tuple[str, str, bool]]] = {}
     seen = set()
     for r in fred_release_dates(start, end, today):
-        m = match_release(r.get("release_name", ""))
+        m = match_release(r.get("release_name", ""), r.get("date", ""))
         if not m:
             continue
         label, when, weekly = m
@@ -656,13 +663,13 @@ def macro_morning(today: dt.date) -> None:
 def check(today: dt.date) -> None:
     print(f"== Check run for {today} ==")
     try:
-        end = today + dt.timedelta(days=14)
+        end = today + dt.timedelta(days=35)
         rows = fred_release_dates(today, end, today)
         names = sorted({r.get("release_name", "") for r in rows})
-        print(f"\nFRED: {len(rows)} release dates in the next 14 days, {len(names)} distinct releases.")
+        print(f"\nFRED: {len(rows)} release dates in the next 35 days, {len(names)} distinct releases.")
         print("Matched as key releases:")
         for r in rows:
-            m = match_release(r.get("release_name", ""))
+            m = match_release(r.get("release_name", ""), r.get("date", ""))
             if m:
                 print(f"  {r['date']}  {m[0]:<32} <- {r['release_name']}")
         print("All release names in the window (to tune KEY_RELEASES):")
