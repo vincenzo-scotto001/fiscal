@@ -24,3 +24,4 @@ jobs:
           echo "Schedule: $SCHEDULE"
           if [ "$EVENT" = "schedule" ]; then echo "=> GitHub schedules work when there is no timezone line."; fi
           date -u
+          
