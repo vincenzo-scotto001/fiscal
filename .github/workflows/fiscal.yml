@@ -1,0 +1,67 @@
+name: Fiscal feeds
+
+on:
+  schedule:
+    # Times are New York time. Odd minutes avoid GitHub's busy top-of-the-hour slot.
+    - cron: '7 18 * * 0'     # Sunday 6:07 PM   -> macro + earnings week ahead
+      timezone: 'America/New_York'
+    - cron: '41 7 * * 1-5'   # Weekdays 7:41 AM -> morning brief + earnings today
+      timezone: 'America/New_York'
+    - cron: '7 20 * * 1-5'   # Weekdays 8:07 PM -> earnings results
+      timezone: 'America/New_York'
+
+  workflow_dispatch:          # adds a "Run workflow" button on the Actions tab
+    inputs:
+      task:
+        description: 'What to run'
+        type: choice
+        default: test-post
+        options:
+          - test-post
+          - check
+          - earnings-week
+          - earnings-today
+          - earnings-results
+          - macro-week
+          - macro-morning
+      dry_run:
+        description: 'Preview only (prints the message in the log, posts nothing)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fiscal-feeds
+  cancel-in-progress: false
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Run Fiscal bot
+        env:
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          DISCORD_WEBHOOK_EARNINGS: ${{ secrets.DISCORD_WEBHOOK_EARNINGS }}
+          DISCORD_WEBHOOK_MACRO: ${{ secrets.DISCORD_WEBHOOK_MACRO }}
+          EVENT: ${{ github.event_name }}
+          TASK: ${{ inputs.task }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            python fiscal_bot.py "$TASK"
+          else
+            python fiscal_bot.py auto
+          fi
