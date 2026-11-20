@@ -1,12 +1,9 @@
 name: Fiscal media feeds
 
 on:
-  schedule:
-    # Every 2 hours from 6:23 AM to 10:23 PM New York time. The first run after 8 AM
-    # also posts the daily headline digests and the crypto board.
-    - cron: '23 6-22/2 * * *'
-      timezone: 'America/New_York'
-
+  # Started every 2 hours (6:23 AM-10:23 PM New York time) by cron-job.org through GitHub's
+  # "Run workflow" API, with task=auto. The first run after 8 AM also posts the daily digests
+  # and the crypto board. (GitHub's own schedule trigger never fired for this repo.)
   workflow_dispatch:
     inputs:
       task:
@@ -16,6 +13,7 @@ on:
         options:
           - check-feeds
           - test-post
+          - auto
           - feeds
           - digests
           - crypto-board
@@ -60,15 +58,9 @@ jobs:
           DISCORD_WEBHOOK_AI: ${{ secrets.DISCORD_WEBHOOK_AI }}
           DISCORD_WEBHOOK_CRYPTO: ${{ secrets.DISCORD_WEBHOOK_CRYPTO }}
           COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
-          EVENT: ${{ github.event_name }}
           TASK: ${{ inputs.task }}
           DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
-        run: |
-          if [ "$EVENT" = "workflow_dispatch" ]; then
-            python feeds_bot.py "$TASK"
-          else
-            python feeds_bot.py auto
-          fi
+        run: python feeds_bot.py "$TASK"
 
       - name: Save memory
         if: always()

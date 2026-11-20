@@ -1,15 +1,8 @@
 name: Fiscal feeds
 
 on:
-  schedule:
-    # Times are New York time. Odd minutes avoid GitHub's busy top-of-the-hour slot.
-    - cron: '7 18 * * 0'     # Sunday 6:07 PM   -> macro + earnings week ahead
-      timezone: 'America/New_York'
-    - cron: '41 7 * * 1-5'   # Weekdays 7:41 AM -> morning brief + earnings today
-      timezone: 'America/New_York'
-    - cron: '7 20 * * 1-5'   # Weekdays 8:07 PM -> earnings results
-      timezone: 'America/New_York'
-
+  # Started on a timer by cron-job.org through GitHub's "Run workflow" API, with task=auto.
+  # (GitHub's own schedule trigger never fired for this repo; see README > Scheduling.)
   workflow_dispatch:          # adds a "Run workflow" button on the Actions tab
     inputs:
       task:
@@ -19,6 +12,7 @@ on:
         options:
           - test-post
           - check
+          - auto
           - earnings-week
           - earnings-today
           - earnings-results
@@ -56,12 +50,6 @@ jobs:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           DISCORD_WEBHOOK_EARNINGS: ${{ secrets.DISCORD_WEBHOOK_EARNINGS }}
           DISCORD_WEBHOOK_MACRO: ${{ secrets.DISCORD_WEBHOOK_MACRO }}
-          EVENT: ${{ github.event_name }}
           TASK: ${{ inputs.task }}
           DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
-        run: |
-          if [ "$EVENT" = "workflow_dispatch" ]; then
-            python fiscal_bot.py "$TASK"
-          else
-            python fiscal_bot.py auto
-          fi
+        run: python fiscal_bot.py "$TASK"

@@ -1,6 +1,7 @@
 # Fiscal bot: automated earnings and macro posts
 
 Posts to two Discord channels on a schedule, for free (GitHub Actions + Discord webhooks + free API keys).
+The timer is a free cron-job.org account that presses "Run workflow" at set times (see **Scheduling** below).
 
 | When (New York time) | Channel | Post |
 |---|---|---|
@@ -10,7 +11,7 @@ Posts to two Discord channels on a schedule, for free (GitHub Actions + Discord 
 | Weekdays 7:41 AM | #earnings | 📊 Earnings Today: EPS and revenue estimates for today's reporters |
 | Weekdays 8:07 PM | #earnings | 🧾 Earnings Results: beats and misses vs. estimates |
 
-GitHub can start scheduled runs 5–30 minutes late when it's busy. That's normal.
+Runs usually start within a minute of the scheduled time.
 Nothing posts on weekends or market holidays, and quiet days are skipped instead of posting an empty message.
 
 ---
@@ -61,7 +62,7 @@ Go to the **Actions** tab, pick **Fiscal feeds** on the left, click **Run workfl
 2. `check`: posts nothing. Open the run and the **Run Fiscal bot** step to see what the data sources return. Send that log to Claude so the release names can be fine-tuned.
 3. `earnings-today` or `macro-morning`: a real post. Tick **dry run** first if you'd rather preview it in the log.
 
-From then on it runs by itself. If a run fails, GitHub emails you.
+Then set up **Scheduling** (below) and it runs by itself. If a run fails, GitHub emails you.
 
 ---
 
@@ -70,7 +71,7 @@ From then on it runs by itself. If a run fails, GitHub emails you.
 - `MIN_REVENUE_ESTIMATE`: the size cutoff for which companies count as notable (default $1B quarterly revenue).
 - `KEY_RELEASES`: which economic reports appear in #macro.
 - `FOMC_DECISIONS`, `MARKET_HOLIDAYS`: update these once a year from federalreserve.gov and nyse.com.
-- Post times: edit the `cron` lines in `.github/workflows/fiscal.yml`.
+- Post times: edit the jobs on cron-job.org (see **Scheduling**).
 
 ---
 
@@ -85,7 +86,7 @@ A second workflow (**Fiscal media feeds**, `feeds_bot.py`) posts from free sourc
 | #ai | New AI podcast episodes and videos, plus a daily **AI Headlines** digest |
 | #crypto | New crypto videos, a daily **Crypto Headlines** digest, and a daily **Crypto Board** with a chart of the biggest coins |
 
-It runs every 2 hours from 6:23 AM to 10:23 PM New York time. Each run posts at most 4 new items per channel; anything left over goes out on the next run.
+cron-job.org starts it every 2 hours from 6:23 AM to 10:23 PM New York time. Each run posts at most 4 new items per channel; anything left over goes out on the next run.
 The digests and the crypto board go out on the first run after 8 AM. YouTube links play right inside Discord, and Shorts are skipped.
 
 ### Setup
@@ -100,6 +101,44 @@ The digests and the crypto board go out on the first run after 8 AM. YouTube lin
 Edit `sources.yml`. For a YouTube channel, paste its @handle (e.g. `youtube: "@allin"`) or its channel ID.
 For a podcast or website, paste its RSS feed URL. Add `digest: true` to put a source in the daily headlines instead of posting each item.
 Run `check-feeds` afterwards to confirm the new source works.
+
+---
+
+## Scheduling (cron-job.org)
+GitHub's built-in `schedule:` trigger never fired for this repo, even after it was made public. So a free outside service starts the runs instead.
+It calls GitHub's "Run workflow" API with `task: auto`, which is the same as clicking **Run workflow** yourself. `auto` then works out what's due from the New York time.
+
+### 1. Make a GitHub token that can only start workflows in this repo
+GitHub → your avatar → **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**:
+- **Name:** `fiscal-cron`. **Expiration:** the longest offered. Set yourself a reminder to renew it.
+- **Repository access:** Only select repositories → `fiscal`
+- **Permissions:** Repository permissions → **Actions: Read and write**. Nothing else.
+
+Copy the token (it starts with `github_pat_`). It can start and cancel workflow runs in this repo. It can't change code or read secrets.
+
+### 2. Create four jobs on cron-job.org
+Make a free account at cron-job.org, then **Create cronjob** for each row:
+
+| Job title | URL | Schedule (time zone **America/New_York**) |
+|---|---|---|
+| Fiscal: week ahead | `https://api.github.com/repos/vincenzo-scotto001/fiscal/actions/workflows/fiscal.yml/dispatches` | Sundays at 18:07 |
+| Fiscal: morning | same as above | Monday-Friday at 07:41 |
+| Fiscal: results | same as above | Monday-Friday at 20:07 |
+| Media feeds | `https://api.github.com/repos/vincenzo-scotto001/fiscal/actions/workflows/feeds.yml/dispatches` | Every day at minute 23 of hours 6, 8, 10, 12, 14, 16, 18, 20, 22 |
+
+In each job's **Advanced** settings:
+- **Request method:** `POST`
+- **Headers:**
+  - `Accept`: `application/vnd.github+json`
+  - `Authorization`: `Bearer github_pat_...` (your token)
+  - `Content-Type`: `application/json`
+- **Request body:** `{"ref":"main","inputs":{"task":"auto"}}`
+- **Notifications:** turn on "notify me when execution fails".
+
+### 3. Test it
+Use the job's **Test run** button. GitHub answers with status 204 (or 200), and a new run appears in the Actions tab within seconds.
+It's safe to test the Fiscal jobs on a weekday afternoon: `auto` finds nothing due and posts nothing. The Media feeds job posts only items that haven't been posted yet.
+Keep the three Fiscal jobs separate. Two jobs firing in the same morning or evening would post the same update twice.
 
 ---
 
