@@ -1,2 +1,5 @@
 requests>=2.31
 tzdata
+feedparser>=6.0
+PyYAML>=6.0
+matplotlib>=3.8

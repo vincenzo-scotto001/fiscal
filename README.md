@@ -77,5 +77,5 @@ Work on a branch and open a pull request instead of pushing to `main`.
 Before opening it, run `python tests/test_offline.py`. It runs every post type against sample data.
 
 ## Cost
-$0. Each run takes about a minute of GitHub Actions time, roughly 75 minutes a month. Private repos get 2,000 free minutes a month.
-Finnhub's free key is meant for personal, non-commercial use. Revisit that before Fiscal adds a paid tier.
+$0. The earnings/macro workflow uses about 75 minutes of GitHub Actions time a month, and the media feeds about 400. Private repos get 2,000 free minutes a month.
+Finnhub's free key and CoinGecko's free tier are meant for personal, non-commercial use. Revisit both before Fiscal adds a paid tier.

@@ -1,0 +1,106 @@
+# Fiscal media sources: where new videos, episodes, articles and headlines come from.
+# Edit freely (open a PR), then run the "check-feeds" task in Actions to test your changes.
+#
+# Each source needs a name plus ONE of:
+#   youtube: UC...          a YouTube channel ID (or its @handle, e.g. "@allin"). Shorts are skipped.
+#   podcast: https://...    a podcast's RSS feed
+#   rss:     https://...    any news site, blog or research feed (RSS or Atom)
+#
+# Optional, per source:
+#   digest: true            include in the once-a-day headline digest instead of posting each item
+#   include: [word, ...]    only items whose title contains one of these words
+#   exclude: [word, ...]    skip items whose title contains one of these words
+
+videos:
+  label: Videos
+  username: Fiscal Videos
+  icon: "🎙️"
+  webhook: DISCORD_WEBHOOK_VIDEOS
+  sources:
+    # Podcasts with political and policy guests. Hosts come from different points of view.
+    - name: All-In Podcast
+      youtube: UCESLZhusAkFfsNsApnjF_Cg       # @allin
+    - name: The Prof G Pod
+      youtube: UC1E1SVcVyU3ntWMSQEp38Yw       # @TheProfGPod
+    - name: Lex Fridman
+      youtube: UCSHZKyawb77ixDdsGog4iWA       # @lexfridman
+    # Finance and policy talks
+    - name: Odd Lots (Bloomberg)
+      podcast: https://omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/8A94442E-5A74-4FA2-8B8D-AE27003A8D6B/982F5071-765C-403D-969D-AE27003A8D83/podcast.rss
+    - name: Federal Reserve
+      youtube: UCAzhpt9DmG6PnHXjmJTvRGQ       # @federalreserve: FOMC press conferences, Fed speeches
+
+education:
+  label: Education
+  username: Fiscal Education
+  icon: "🎓"
+  webhook: DISCORD_WEBHOOK_EDUCATION
+  sources:
+    - name: The Plain Bagel                   # beginner-friendly explainers
+      youtube: UCFCEuCsyWP0YkP3CZ3Mr01Q
+    - name: Ben Felix                         # evidence-based investing
+      youtube: UCDXTQ8nWmx_EhZ2v-kp7QxA
+    - name: Patrick Boyle                     # markets, hedge funds, finance history
+      youtube: UCASM0cgfkJxQ1ICmRilfHLw
+    - name: FRED Blog (St. Louis Fed)         # short data explainers
+      rss: https://fredblog.stlouisfed.org/feed/
+    - name: Liberty Street Economics (NY Fed) # Fed research, written for non-specialists
+      rss: https://libertystreeteconomics.newyorkfed.org/feed/
+    - name: Aswath Damodaran                  # NYU valuation professor, advanced
+      rss: https://aswathdamodaran.blogspot.com/feeds/posts/default?max-results=10
+
+ai:
+  label: AI
+  username: Fiscal AI
+  icon: "🤖"
+  webhook: DISCORD_WEBHOOK_AI
+  sources:
+    - name: Dwarkesh Podcast
+      youtube: UCXl4i9dYBrFOabk0xGmbkRA       # @DwarkeshPatel
+    - name: No Priors
+      youtube: UCSI7h9hydQ40K5MJHnCrQvw       # @NoPriorsPodcast
+    - name: AI Explained
+      youtube: UCNJ1Ymd5yFuUPtn21xtRbbw       # @aiexplained-official
+    - name: Two Minute Papers
+      youtube: UCbfYPyITQ-7l4upoX8nvctg       # @TwoMinutePapers
+    - name: Andrej Karpathy                   # deep-dive lessons on how AI works
+      youtube: UCXUPKJO5MZQN11PqgIvyuvQ
+    # Daily headline digest
+    - name: OpenAI News
+      rss: https://openai.com/news/rss.xml
+      digest: true
+    - name: The Verge
+      rss: https://www.theverge.com/rss/ai-artificial-intelligence/index.xml
+      digest: true
+    - name: TechCrunch
+      rss: https://techcrunch.com/category/artificial-intelligence/feed/
+      digest: true
+    - name: MIT Technology Review
+      rss: https://www.technologyreview.com/topic/artificial-intelligence/feed
+      digest: true
+
+crypto:
+  label: Crypto
+  username: Fiscal Crypto
+  icon: "🪙"
+  webhook: DISCORD_WEBHOOK_CRYPTO
+  market_board: true                          # daily board of the biggest coins, with charts
+  sources:
+    - name: Bankless
+      youtube: UCAl9Ld79qaZxp9JzEOwd3aA       # @Bankless
+    - name: Coin Bureau
+      youtube: UCqK_GSMbpiV8spgD3ZGloSw       # @CoinBureau
+    - name: Anthony Pompliano
+      youtube: UCevXpeL8cNyAnww-NqJ4m2w       # @AnthonyPompliano
+    - name: Whiteboard Crypto                 # beginner explainers
+      youtube: UCsYYksPHiGqXHPoHI-fm5sg
+    # Daily headline digest
+    - name: CoinDesk
+      rss: https://www.coindesk.com/arc/outboundfeeds/rss/
+      digest: true
+    - name: Cointelegraph
+      rss: https://cointelegraph.com/rss
+      digest: true
+    - name: Decrypt
+      rss: https://decrypt.co/feed
+      digest: true

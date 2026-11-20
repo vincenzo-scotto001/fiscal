@@ -254,15 +254,39 @@ def make_embed(title: str, description: str, color: int, fields: list[dict], foo
     return e
 
 
-def post(webhook_env: str, username: str, embed: dict) -> None:
-    payload = {"username": username, "embeds": [embed], "allowed_mentions": {"parse": []}}
+DRY_RUN_DIR = os.environ.get("DRY_RUN_DIR", "dry-run-output")
+
+
+def post(webhook_env: str, username: str, embed: dict | None = None, content: str | None = None,
+         files: list[tuple[str, bytes]] | None = None) -> None:
+    """Send one message: an embed, plain text (links unfurl), and/or image attachments."""
+    payload: dict = {"username": username, "allowed_mentions": {"parse": []}}
+    if embed:
+        payload["embeds"] = [embed]
+    if content:
+        payload["content"] = content[:2000]
+    if files:
+        payload["attachments"] = [{"id": i, "filename": name} for i, (name, _) in enumerate(files)]
+    label = embed["title"] if embed else (content or "").splitlines()[0][:80]
     if DRY_RUN:
         print(f"--- DRY RUN: would post to {webhook_env} ---")
         print(json.dumps(payload, indent=2, ensure_ascii=False))
+        for name, data in files or []:
+            os.makedirs(DRY_RUN_DIR, exist_ok=True)
+            with open(os.path.join(DRY_RUN_DIR, name), "wb") as fh:
+                fh.write(data)
+            print(f"(attachment saved to {os.path.join(DRY_RUN_DIR, name)})")
         return
     url = require_env(webhook_env)
     for attempt in range(4):
-        r = requests.post(url, params={"wait": "true"}, json=payload, timeout=25)
+        if files:
+            r = requests.post(
+                url, params={"wait": "true"}, data={"payload_json": json.dumps(payload)},
+                files={f"files[{i}]": (name, data, "image/png") for i, (name, data) in enumerate(files)},
+                timeout=40,
+            )
+        else:
+            r = requests.post(url, params={"wait": "true"}, json=payload, timeout=25)
         if r.status_code == 429:
             try:
                 wait = float(r.json().get("retry_after", 2))
@@ -275,7 +299,7 @@ def post(webhook_env: str, username: str, embed: dict) -> None:
             continue
         if r.status_code >= 400:
             raise RuntimeError(f"Discord rejected the post (HTTP {r.status_code}): {r.text[:300]}")
-        print(f"Posted '{embed['title']}' via {webhook_env}")
+        print(f"Posted '{label}' via {webhook_env}")
         return
     raise RuntimeError("Discord kept failing after retries")
 
