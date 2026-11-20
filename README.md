@@ -72,10 +72,41 @@ From then on it runs by itself. If a run fails, GitHub emails you.
 - `FOMC_DECISIONS`, `MARKET_HOLIDAYS`: update these once a year from federalreserve.gov and nyse.com.
 - Post times: edit the `cron` lines in `.github/workflows/fiscal.yml`.
 
+---
+
+# Media feeds: videos, education, AI and crypto
+
+A second workflow (**Fiscal media feeds**, `feeds_bot.py`) posts from free sources listed in `sources.yml`:
+
+| Channel | What gets posted |
+|---|---|
+| #videos | New episodes from podcasts with political and policy guests, plus Fed press conferences and speeches |
+| #education | New videos, articles and research, from beginner explainers to advanced valuation |
+| #ai | New AI podcast episodes and videos, plus a daily **AI Headlines** digest |
+| #crypto | New crypto videos, a daily **Crypto Headlines** digest, and a daily **Crypto Board** with a chart of the biggest coins |
+
+It runs every 2 hours from 6:23 AM to 10:23 PM New York time. Each run posts at most 4 new items per channel; anything left over goes out on the next run.
+The digests and the crypto board go out on the first run after 8 AM. YouTube links play right inside Discord, and Shorts are skipped.
+
+### Setup
+1. Make #videos, #education, #ai and #crypto read-only with threads, the same way as step 1 above.
+2. Create a webhook in each of the four channels (⚙️ Edit Channel → Integrations → Webhooks → New Webhook → Copy Webhook URL).
+3. Add them as repository secrets, with the names exactly as written: `DISCORD_WEBHOOK_VIDEOS`, `DISCORD_WEBHOOK_EDUCATION`, `DISCORD_WEBHOOK_AI`, `DISCORD_WEBHOOK_CRYPTO`.
+   A channel without a secret is simply skipped, so you can add them one at a time.
+4. Optional: the crypto board uses CoinGecko's free keyless API. If it ever gets rate-limited, get a free Demo key at coingecko.com/en/api and add it as `COINGECKO_API_KEY`.
+5. Go to **Actions → Fiscal media feeds → Run workflow** and run `check-feeds`. It tests every source and posts nothing. Then run `test-post`.
+
+### Adding or removing sources
+Edit `sources.yml`. For a YouTube channel, paste its @handle (e.g. `youtube: "@allin"`) or its channel ID.
+For a podcast or website, paste its RSS feed URL. Add `digest: true` to put a source in the daily headlines instead of posting each item.
+Run `check-feeds` afterwards to confirm the new source works.
+
+---
+
 ## Making changes
 Work on a branch and open a pull request instead of pushing to `main`.
-Before opening it, run `python tests/test_offline.py`. It runs every post type against sample data.
+Before opening it, run `python tests/test_offline.py` and `python tests/test_feeds_offline.py`. They run every post type against sample data.
 
 ## Cost
-$0. Each run takes about a minute of GitHub Actions time, roughly 75 minutes a month. Private repos get 2,000 free minutes a month.
-Finnhub's free key is meant for personal, non-commercial use. Revisit that before Fiscal adds a paid tier.
+$0. The earnings/macro workflow uses about 75 minutes of GitHub Actions time a month, and the media feeds about 400. Private repos get 2,000 free minutes a month.
+Finnhub's free key and CoinGecko's free tier are meant for personal, non-commercial use. Revisit both before Fiscal adds a paid tier.
