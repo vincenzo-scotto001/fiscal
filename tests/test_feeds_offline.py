@@ -186,4 +186,5 @@ print("chart:", png)
 # --- auto end-to-end through main(): state persists only outside dry run
 assert feeds.main.__doc__ is None or True
 print("\nwarnings:", warnings)
+assert feeds.QUIET_HOURS == (23, 6)
 print("\nALL FEEDS TESTS PASSED")

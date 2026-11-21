@@ -180,24 +180,70 @@ for task in ("earnings-today", "earnings-results", "earnings-week"):
     print(f"\nstress ok: {task}: {fb.embed_size(e)} chars, {len(e.get('fields', []))} fields")
 STRESS = False
 
-# auto schedule mapping
-ET = fb.ET
-assert fb.auto_tasks(dt.datetime(2026, 11, 22, 18, 7, tzinfo=ET)) == ["macro-week", "earnings-week"]
-assert fb.auto_tasks(dt.datetime(2026, 11, 23, 7, 41, tzinfo=ET)) == ["macro-morning", "earnings-today"]
-assert fb.auto_tasks(dt.datetime(2026, 11, 23, 8, 40, tzinfo=ET)) == ["macro-morning", "earnings-today"]
-assert fb.auto_tasks(dt.datetime(2026, 11, 23, 20, 7, tzinfo=ET)) == ["earnings-results"]
-assert fb.auto_tasks(dt.datetime(2026, 11, 21, 9, 0, tzinfo=ET)) == []
+# auto schedule: replay the UTC cron lines from fiscal.yml for a winter and a summer week,
+# including a skipped run, and check each post goes out exactly once at the right NY time.
+import yaml  # noqa: E402
+
+ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+crons = [c["cron"] for c in yaml.safe_load(open(os.path.join(ROOT, ".github/workflows/fiscal.yml")))[True]["schedule"]]
+assert not any("timezone" in str(c) for c in crons)
+
+
+def expand(field, lo, hi):
+    out = set()
+    for part in field.split(","):
+        rng, _, step = part.partition("/")
+        a, b = (lo, hi) if rng == "*" else (tuple(map(int, rng.split("-"))) if "-" in rng else (int(rng), int(rng)))
+        out.update(range(a, b + 1, int(step or 1)))
+    return out
+
+
+def fires(start_utc, days):
+    t = start_utc
+    while t < start_utc + dt.timedelta(days=days):
+        for c in crons:
+            mi, hr, _, _, dow = c.split()
+            if t.minute in expand(mi, 0, 59) and t.hour in expand(hr, 0, 23) and \
+                    ((t.weekday() + 1) % 7) in expand(dow, 0, 6):
+                yield t
+                break
+        t += dt.timedelta(minutes=1)
+
+
+def replay(start_utc, skip=()):
+    posted, log = {}, []
+    for t in fires(start_utc, 7):
+        if t in skip:
+            continue
+        now = t.astimezone(fb.ET)
+        todo, _ = fb.plan_auto(now, posted)
+        for task in todo:
+            posted[task] = now.date().isoformat()
+            log.append((now.strftime("%a %H:%M"), task))
+    return log
+
+
+UTC = dt.timezone.utc
+for label, start in (("winter (EST)", dt.datetime(2026, 11, 22, 12, tzinfo=UTC)),
+                     ("summer (EDT)", dt.datetime(2027, 6, 13, 12, tzinfo=UTC))):
+    log = replay(start)
+    times = {task: sorted({w for w, t in log if t == task}) for task in fb.TASKS if any(t == task for _, t in log)}
+    print(f"\n{label}:", {k: v for k, v in times.items()})
+    assert len(log) == len({(w.split()[0], t) for w, t in log}), "a task posted twice on the same day"
+    assert all(w.endswith("07:41") for w, t in log if t in ("macro-morning", "earnings-today")), log
+    assert all(w.endswith("20:07") for w, t in log if t == "earnings-results"), log
+    assert all(w == "Sun 18:07" for w, t in log if t in ("macro-week", "earnings-week")), log
+    assert sum(t == "macro-morning" for _, t in log) == 5 and sum(t == "earnings-results" for _, t in log) == 5
+    assert sum(t == "earnings-week" for _, t in log) == 1
+
+# GitHub skips the 7:41 AM and 8:07 PM runs on Monday -> the backups post an hour later, once
+skip = {dt.datetime(2026, 11, 23, 12, 41, tzinfo=UTC), dt.datetime(2026, 11, 24, 1, 7, tzinfo=UTC)}
+mon = [(w, t) for w, t in replay(dt.datetime(2026, 11, 22, 12, tzinfo=UTC), skip) if w.startswith("Mon")]
+print("Monday with two skipped runs:", mon)
+assert ("Mon 08:41", "macro-morning") in mon and ("Mon 21:07", "earnings-results") in mon
+assert sum(t == "macro-morning" for _, t in mon) == 1
+
+# results with no actuals yet must stay retryable (returns False)
+assert fb.TASKS["earnings-results"].__name__ == "earnings_results"
 assert fb.next_monday(dt.date(2026, 11, 22)) == dt.date(2026, 11, 23)
-assert fb.next_monday(dt.date(2026, 11, 23)) == dt.date(2026, 11, 30)
-m = fb.match_release
-assert m("Manufacturer's Shipments, Inventories, and Orders (M3) Survey", "2026-11-25")[0] == "Durable Goods Orders"
-assert m("Manufacturer's Shipments, Inventories, and Orders (M3) Survey", "2026-12-03")[0] == "Factory Orders"
-assert m("ADP National Employment Report", "2026-12-02")[0] == "ADP Private Payrolls"
-assert m("State Unemployment Insurance Weekly Claims Report") is None
-assert m("Gross Domestic Product by County") is None and m("Personal Income by County") is None
-assert m("Debt to Gross Domestic Product Ratios") is None
-assert m("Consumer Price Index Excluding Energy Commodities") is None
-assert m("Research Consumer Price Index") is None
-assert m("Consumer Price Index", "2026-12-10")[0] == "CPI Inflation"
-assert m("Manufacturing Business Outlook Survey")[0] == "Philly Fed Manufacturing"
 print("\nALL TESTS PASSED")

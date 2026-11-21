@@ -48,6 +48,7 @@ MAX_AGE_HOURS = 36           # never post anything older than this
 MAX_POSTS_PER_CHANNEL = 4    # per run, so a busy day can't flood a channel (the rest wait a run)
 DIGEST_SIZE = 10             # headlines per daily digest
 DIGEST_HOUR = 8              # digests + crypto board go out on the first run after 8 AM ET
+QUIET_HOURS = (23, 6)        # scheduled runs post nothing from 11 PM to 6 AM ET
 BOARD_COINS = 8              # coins on the crypto board
 # ===============================================================================
 
@@ -552,6 +553,10 @@ def main() -> int:
     today = now.date().isoformat()
     failed = False
     print(f">>> {args.task} ({now:%a %b %d %H:%M} ET){' [dry run]' if fb.DRY_RUN else ''}")
+    if args.task == "auto" and (now.hour >= QUIET_HOURS[0] or now.hour < QUIET_HOURS[1]):
+        print("Quiet hours, nothing posted")
+        save_state(state)
+        return 0
     try:
         if args.task == "check-feeds":
             check_feeds(sources, state)

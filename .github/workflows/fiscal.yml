@@ -2,14 +2,14 @@ name: Fiscal feeds
 
 on:
   schedule:
-    # Times are New York time. Odd minutes avoid GitHub's busy top-of-the-hour slot.
-    - cron: '7 18 * * 0'     # Sunday 6:07 PM   -> macro + earnings week ahead
-      timezone: 'America/New_York'
-    - cron: '41 7 * * 1-5'   # Weekdays 7:41 AM -> morning brief + earnings today
-      timezone: 'America/New_York'
-    - cron: '7 20 * * 1-5'   # Weekdays 8:07 PM -> earnings results
-      timezone: 'America/New_York'
-
+    # All times are UTC: GitHub ignored the timezone setting on this repo.
+    # Each post gets several chances, covering winter (EST) and summer (EDT) time plus a backup,
+    # because GitHub can start scheduled runs late or skip them. fiscal_bot only posts inside the
+    # right New York window and remembers what it already posted today, so nothing doubles.
+    - cron: '41 11,12,13 * * 1-5'   # morning brief + earnings today (window 7 AM-noon ET)
+    - cron: '7 0,1,2 * * 2-6'       # earnings results, evening before in ET (window from 8 PM ET)
+    - cron: '7 22,23 * * 0'         # Sunday week ahead (window from 6 PM ET)
+    - cron: '7 0 * * 1'             # Sunday week ahead, backup
   workflow_dispatch:          # adds a "Run workflow" button on the Actions tab
     inputs:
       task:
@@ -50,6 +50,14 @@ jobs:
 
       - run: pip install -r requirements.txt
 
+      # Remembers what was posted today, so the backup runs don't post twice.
+      - name: Restore memory
+        uses: actions/cache/restore@v4
+        with:
+          path: .state
+          key: fiscal-state-${{ github.run_id }}
+          restore-keys: fiscal-state-
+
       - name: Run Fiscal bot
         env:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
@@ -65,3 +73,10 @@ jobs:
           else
             python fiscal_bot.py auto
           fi
+
+      - name: Save memory
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .state
+          key: fiscal-state-${{ github.run_id }}
