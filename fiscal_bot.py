@@ -559,7 +559,7 @@ def earnings_today(today: dt.date) -> None:
     post("DISCORD_WEBHOOK_EARNINGS", "Fiscal Earnings", embed)
 
 
-def earnings_results(today: dt.date) -> None:
+def earnings_results(today: dt.date) -> bool | None:
     if is_weekend(today) or iso(today) in MARKET_HOLIDAYS:
         print("earnings-results: market closed, nothing posted")
         return
@@ -567,8 +567,8 @@ def earnings_results(today: dt.date) -> None:
     reported = [r for r in rows if r.get("epsActual") is not None or r.get("revenueActual") is not None]
     pending = [r for r in rows if r not in reported]
     if not reported:
-        print("earnings-results: no results available yet, nothing posted")
-        return
+        print("earnings-results: no results available yet, nothing posted (will retry on the next run)")
+        return False
     tally = {"beat": 0, "miss": 0, "inline": 0}
     for r in reported:
         v = verdict(r.get("epsActual"), r.get("epsEstimate"), True)
@@ -737,16 +737,49 @@ TASKS = {
 }
 
 
+# Each scheduled post gets several chances (GitHub's scheduler can be late or skip runs).
+# A post only goes out inside its New York window, and only once per day.
+AUTO_WINDOWS = {
+    # name: (weekdays, first hour, last hour + 1, tasks)
+    "week": ({6}, 18, 24, ["macro-week", "earnings-week"]),               # Sunday from 6 PM
+    "morning": ({0, 1, 2, 3, 4}, 7, 12, ["macro-morning", "earnings-today"]),  # weekdays 7 AM-noon
+    "results": ({0, 1, 2, 3, 4}, 20, 24, ["earnings-results"]),            # weekdays from 8 PM
+}
+STATE_FILE = os.environ.get("FISCAL_STATE_FILE",
+                            os.path.join(os.path.dirname(os.path.abspath(__file__)), ".state", "fiscal.json"))
+
+
 def auto_tasks(now: dt.datetime) -> list[str]:
-    """What the schedule should run at this New York time (tolerates GitHub's start delays)."""
-    wd = now.weekday()
-    if wd == 6:
-        return ["macro-week", "earnings-week"]
-    if wd <= 4 and now.hour < 12:
-        return ["macro-morning", "earnings-today"]
-    if wd <= 4 and now.hour >= 17:
-        return ["earnings-results"]
+    """What's due at this New York time (before checking what was already posted today)."""
+    for days, start, end, tasks in AUTO_WINDOWS.values():
+        if now.weekday() in days and start <= now.hour < end:
+            return list(tasks)
     return []
+
+
+def plan_auto(now: dt.datetime, posted: dict) -> tuple[list[str], list[str]]:
+    """(tasks to run now, tasks skipped because they were already posted today)."""
+    today = now.date().isoformat()
+    due = auto_tasks(now)
+    done = [t for t in due if posted.get(t) == today]
+    return [t for t in due if t not in done], done
+
+
+def load_posted() -> dict:
+    try:
+        with open(STATE_FILE) as fh:
+            return json.load(fh).get("posted", {})
+    except (FileNotFoundError, ValueError):
+        return {}
+
+
+def save_posted(posted: dict) -> None:
+    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+    if DRY_RUN:
+        return
+    cutoff = (dt.date.today() - dt.timedelta(days=14)).isoformat()
+    with open(STATE_FILE, "w") as fh:
+        json.dump({"posted": {k: v for k, v in posted.items() if v >= cutoff}}, fh, indent=1, sort_keys=True)
 
 
 def main() -> int:
@@ -764,21 +797,33 @@ def main() -> int:
         now = parsed.replace(tzinfo=ET) if "T" in args.date else now.replace(
             year=parsed.year, month=parsed.month, day=parsed.day)
 
-    tasks = []
+    today = now.date().isoformat()
+    posted = load_posted()
+    tasks: list[str] = []
     for t in args.tasks:
-        tasks.extend(auto_tasks(now) if t == "auto" else [t])
+        if t != "auto":
+            tasks.append(t)
+            continue
+        todo, done = plan_auto(now, posted)
+        if done:
+            print(f"Already posted today: {', '.join(done)}")
+        tasks.extend(todo)
     if not tasks:
-        print(f"Nothing scheduled for {now:%a %H:%M} ET")
+        print(f"Nothing to post at {now:%a %H:%M} ET")
+        save_posted(posted)
         return 0
 
     failures = 0
     for t in tasks:
         print(f"\n>>> {t} ({now:%a %b %d %H:%M} ET){' [dry run]' if DRY_RUN else ''}")
         try:
-            TASKS[t](now.date())
+            result = TASKS[t](now.date())
+            if "auto" in args.tasks and result is not False:  # False = nothing yet, try again next run
+                posted[t] = today
         except Exception as exc:  # keep going so one bad source doesn't block the others
             failures += 1
             print(f"!!! {t} failed: {exc}")
+    save_posted(posted)
     return 1 if failures else 0
 
 

@@ -5,3 +5,4 @@
 - Economic releases are matched by exact FRED release name (`KEY_RELEASES` in `fiscal_bot.py`). After changing them, ask the owner to run the `check` task from the Actions tab and confirm the matches in the log.
 - The bot posts to a live Discord server. For manual test runs, use `--dry-run` (or the workflow's dry-run box).
 - Media sources (videos, podcasts, news, research) live in `sources.yml`. After changing them, ask the owner to run the `check-feeds` task from the Actions tab.
+- Schedules: `cron` lines are in **UTC with no `timezone:` key** (GitHub ignored it on this repo, and scheduled runs arrive late or get skipped). Each fiscal post has several cron chances; `fiscal_bot.py` posts only inside `AUTO_WINDOWS` and remembers what it posted today (`.state/fiscal.json`, kept in the Actions cache). `feeds_bot.py` runs hourly with quiet hours. The schedule replay in `tests/test_offline.py` must still pass after any cron change.
