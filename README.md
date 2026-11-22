@@ -10,7 +10,7 @@ Posts to two Discord channels on a schedule, for free (GitHub Actions + Discord 
 | Weekdays 7:41 AM | #earnings | 📊 Earnings Today: EPS and revenue estimates for today's reporters |
 | Weekdays 8:07 PM | #earnings | 🧾 Earnings Results: beats and misses vs. estimates |
 
-GitHub often starts scheduled runs late (from about 35 minutes to 2½ hours) and sometimes skips them, so each post gets a few chances.
+GitHub often starts scheduled runs late and skips many of them, so each post gets a chance every 15 minutes inside its window.
 The bot only posts inside the right window (morning brief 7 AM–noon, results after 8 PM, week ahead Sunday after 6 PM) and remembers what it already posted, so nothing doubles.
 Nothing posts on weekends or market holidays, and quiet days are skipped instead of posting an empty message.
 
@@ -71,7 +71,7 @@ From then on it runs by itself. If a run fails, GitHub emails you.
 - `MIN_REVENUE_ESTIMATE`: the size cutoff for which companies count as notable (default $1B quarterly revenue).
 - `KEY_RELEASES`: which economic reports appear in #macro.
 - `FOMC_DECISIONS`, `MARKET_HOLIDAYS`: update these once a year from federalreserve.gov and nyse.com.
-- Post times: edit the `cron` lines in `.github/workflows/fiscal.yml`. They're in **UTC** (GitHub ignored the `timezone:` setting on this repo), and each post has one line per daylight-saving offset plus a backup. Also update `AUTO_WINDOWS` in `fiscal_bot.py`. `tests/test_offline.py` replays the schedule to check it.
+- Post times: edit the `cron` lines in `.github/workflows/fiscal.yml`. They're in **UTC** (GitHub ignored the `timezone:` setting on this repo), and each post has a chance every 15 minutes, covering both daylight-saving offsets. Also update `AUTO_WINDOWS` in `fiscal_bot.py`. `tests/test_offline.py` replays the schedule to check it.
 
 ---
 
@@ -86,7 +86,7 @@ A second workflow (**Fiscal media feeds**, `feeds_bot.py`) posts from free sourc
 | #ai | New AI podcast episodes and videos, plus a daily **AI Headlines** digest |
 | #crypto | New crypto videos, a daily **Crypto Headlines** digest, and a daily **Crypto Board** with a chart of the biggest coins |
 
-It runs every hour (at :23 UTC, often late) and stays quiet from 11 PM to 6 AM New York time. Each run posts at most 4 new items per channel; anything left over goes out on the next run.
+It checks every 15 minutes (GitHub skips many of these) and stays quiet from 11 PM to 6 AM New York time. Each run posts at most 4 new items per channel; anything left over goes out on the next run.
 The digests and the crypto board go out on the first run after 8 AM. YouTube links play right inside Discord, and Shorts are skipped.
 
 ### Setup
@@ -109,5 +109,5 @@ Work on a branch and open a pull request instead of pushing to `main`.
 Before opening it, run `python tests/test_offline.py` and `python tests/test_feeds_offline.py`. They run every post type against sample data.
 
 ## Cost
-$0. The repo is public, and GitHub Actions is free for public repos. If it ever goes private again: the earnings/macro workflow uses about 150 minutes a month and the media feeds about 720, within the 2,000 free minutes private repos get.
+$0, because the repo is public and GitHub Actions is free for public repos. **Keep it public:** the 15-minute checks add up to about 4,000 runs a month, well over the 2,000 free minutes a private repo gets. If it ever goes private, change the media feeds back to hourly (`23 * * * *`) and give each fiscal post just one or two chances.
 Finnhub's free key and CoinGecko's free tier are meant for personal, non-commercial use. Revisit both before Fiscal adds a paid tier.
