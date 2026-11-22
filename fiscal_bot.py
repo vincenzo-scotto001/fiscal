@@ -737,13 +737,13 @@ TASKS = {
 }
 
 
-# Each scheduled post gets several chances (GitHub's scheduler can be late or skip runs).
-# A post only goes out inside its New York window, and only once per day.
+# Each scheduled post gets a chance every 15 minutes inside its window, because GitHub's scheduler
+# often starts runs late or skips them. A post only goes out inside its New York window, once per day.
 AUTO_WINDOWS = {
-    # name: (weekdays, first hour, last hour + 1, tasks)
-    "week": ({6}, 18, 24, ["macro-week", "earnings-week"]),               # Sunday from 6 PM
-    "morning": ({0, 1, 2, 3, 4}, 7, 12, ["macro-morning", "earnings-today"]),  # weekdays 7 AM-noon
-    "results": ({0, 1, 2, 3, 4}, 20, 24, ["earnings-results"]),            # weekdays from 8 PM
+    # name: (weekdays, window opens (hour, minute), closes at this hour, tasks)
+    "week": ({6}, (18, 7), 24, ["macro-week", "earnings-week"]),                     # Sunday from 6:07 PM
+    "morning": ({0, 1, 2, 3, 4}, (7, 41), 12, ["macro-morning", "earnings-today"]),  # weekdays 7:41 AM-noon
+    "results": ({0, 1, 2, 3, 4}, (20, 7), 24, ["earnings-results"]),                # weekdays from 8:07 PM
 }
 STATE_FILE = os.environ.get("FISCAL_STATE_FILE",
                             os.path.join(os.path.dirname(os.path.abspath(__file__)), ".state", "fiscal.json"))
@@ -751,8 +751,8 @@ STATE_FILE = os.environ.get("FISCAL_STATE_FILE",
 
 def auto_tasks(now: dt.datetime) -> list[str]:
     """What's due at this New York time (before checking what was already posted today)."""
-    for days, start, end, tasks in AUTO_WINDOWS.values():
-        if now.weekday() in days and start <= now.hour < end:
+    for days, opens, closes, tasks in AUTO_WINDOWS.values():
+        if now.weekday() in days and opens <= (now.hour, now.minute) and now.hour < closes:
             return list(tasks)
     return []
 

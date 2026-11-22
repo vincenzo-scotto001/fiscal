@@ -236,12 +236,43 @@ for label, start in (("winter (EST)", dt.datetime(2026, 11, 22, 12, tzinfo=UTC))
     assert sum(t == "macro-morning" for _, t in log) == 5 and sum(t == "earnings-results" for _, t in log) == 5
     assert sum(t == "earnings-week" for _, t in log) == 1
 
-# GitHub skips the 7:41 AM and 8:07 PM runs on Monday -> the backups post an hour later, once
+# GitHub skips the 7:41 AM and 8:07 PM runs on Monday -> the next chance posts 15 minutes later, once
 skip = {dt.datetime(2026, 11, 23, 12, 41, tzinfo=UTC), dt.datetime(2026, 11, 24, 1, 7, tzinfo=UTC)}
 mon = [(w, t) for w, t in replay(dt.datetime(2026, 11, 22, 12, tzinfo=UTC), skip) if w.startswith("Mon")]
 print("Monday with two skipped runs:", mon)
-assert ("Mon 08:41", "macro-morning") in mon and ("Mon 21:07", "earnings-results") in mon
+assert ("Mon 07:56", "macro-morning") in mon and ("Mon 20:22", "earnings-results") in mon
 assert sum(t == "macro-morning" for _, t in mon) == 1
+
+# GitHub drops 85% of runs (what we saw on Nov 21): over 40 simulated weeks, nothing ever posts
+# twice, nothing posts outside its window, and almost every post still goes out.
+import random  # noqa: E402
+
+rng = random.Random(7)
+start = dt.datetime(2026, 11, 22, 12, tzinfo=UTC)
+all_fires = list(fires(start, 7 * 40))
+dropped = {t for t in all_fires if rng.random() < 0.85}
+posted, log = {}, []
+for t in all_fires:
+    if t in dropped:
+        continue
+    now = t.astimezone(fb.ET)
+    todo, _ = fb.plan_auto(now, posted)
+    for task in todo:
+        posted[task] = now.date().isoformat()
+        log.append((now, task))
+per_day = {}
+for now, task in log:
+    key = (now.date(), task)
+    per_day[key] = per_day.get(key, 0) + 1
+assert max(per_day.values()) == 1, "posted twice in a day"
+assert all((n.hour, n.minute) >= (7, 41) and n.hour < 12 for n, t in log if t == "macro-morning")
+assert all((n.hour, n.minute) >= (20, 7) for n, t in log if t == "earnings-results")
+assert all(n.weekday() == 6 and (n.hour, n.minute) >= (18, 7) for n, t in log if t == "earnings-week")
+mornings = sum(t == "macro-morning" for _, t in log)
+results = sum(t == "earnings-results" for _, t in log)
+weeks = sum(t == "earnings-week" for _, t in log)
+print(f"85% of runs dropped, 40 weeks: mornings {mornings}/200, results {results}/200, week-ahead {weeks}/40")
+assert mornings >= 180 and results >= 180 and weeks >= 34
 
 # results with no actuals yet must stay retryable (returns False)
 assert fb.TASKS["earnings-results"].__name__ == "earnings_results"

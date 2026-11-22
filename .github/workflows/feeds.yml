@@ -2,10 +2,10 @@ name: Fiscal media feeds
 
 on:
   schedule:
-    # Every hour at :23, in UTC (GitHub ignored the timezone setting on this repo). Hourly gives
-    # extra chances when GitHub skips a run. feeds_bot stays quiet from 11 PM to 6 AM New York
-    # time, and the first run after 8 AM also posts the daily digests and the crypto board.
-    - cron: '23 * * * *'
+    # Every 15 minutes, in UTC (GitHub ignored the timezone setting on this repo and skips many
+    # scheduled runs, so frequent checks keep posts timely). feeds_bot stays quiet from 11 PM to
+    # 6 AM New York time, and the first run after 8 AM also posts the daily digests and crypto board.
+    - cron: '8,23,38,53 * * * *'
   workflow_dispatch:
     inputs:
       task:
