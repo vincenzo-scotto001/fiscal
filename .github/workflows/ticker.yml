@@ -1,0 +1,70 @@
+name: Fiscal ticker
+
+# Keeps the bots checking every ~30 minutes without relying on GitHub's scheduler, which skips
+# most scheduled runs on this repo. Each tick asks "Fiscal feeds" and "Fiscal media feeds" to
+# post whatever is due (task: auto), and queues the next tick. That next tick first waits
+# 30 minutes in the "ticker-30m" environment (Settings > Environments > ticker-30m, wait timer
+# 30 minutes). Wait timers only work on public repos on the Free plan, so the loop stops itself
+# if the repo is made private.
+#
+# Start or restart the loop: Actions > Fiscal ticker > Run workflow (leave "wait" unticked).
+
+on:
+  workflow_dispatch:
+    inputs:
+      wait:
+        description: 'Wait 30 minutes first (the loop sets this itself; leave unticked to start now)'
+        type: boolean
+        default: false
+  schedule:
+    # Backup only: if GitHub's scheduler does fire and the loop has stopped, this restarts it.
+    # If the loop is running, this extra tick just replaces the next queued one.
+    - cron: '17 */2 * * *'
+
+permissions:
+  actions: write
+  contents: read
+
+# One tick at a time, and at most one queued behind it, so there's only ever one loop.
+concurrency:
+  group: fiscal-ticker
+  cancel-in-progress: false
+
+jobs:
+  wait:
+    if: github.event_name == 'workflow_dispatch' && inputs.wait
+    runs-on: ubuntu-latest
+    environment: ticker-30m
+    steps:
+      - run: echo "Waited 30 minutes"
+
+  tick:
+    needs: wait
+    if: ${{ !cancelled() && (needs.wait.result == 'success' || needs.wait.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      IS_PRIVATE: ${{ github.event.repository.private }}
+    steps:
+      - name: Queue the next tick (runs about 30 minutes from now)
+        run: |
+          if [ "$IS_PRIVATE" = "true" ]; then
+            echo "::warning::This repo is private, so the 30-minute wait timer is ignored. Loop stopped to avoid back-to-back runs."
+            exit 0
+          fi
+          for attempt in 1 2 3; do
+            gh workflow run ticker.yml --ref main -f wait=true && exit 0
+            sleep 15
+          done
+          echo "::error::Couldn't queue the next tick. Restart it from Actions > Fiscal ticker > Run workflow."
+          exit 1
+
+      - name: Earnings and macro (posts only what's due)
+        if: ${{ !cancelled() }}
+        run: gh workflow run fiscal.yml --ref main -f task=auto
+
+      - name: Media feeds (posts only what's new)
+        if: ${{ !cancelled() }}
+        run: gh workflow run feeds.yml --ref main -f task=auto

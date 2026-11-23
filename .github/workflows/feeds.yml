@@ -18,6 +18,7 @@ on:
           - feeds
           - digests
           - crypto-board
+          - auto
       dry_run:
         description: 'Preview only (prints the messages in the log, posts nothing)'
         type: boolean

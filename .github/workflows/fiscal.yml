@@ -24,6 +24,7 @@ on:
           - earnings-results
           - macro-week
           - macro-morning
+          - auto
       dry_run:
         description: 'Preview only (prints the message in the log, posts nothing)'
         type: boolean
