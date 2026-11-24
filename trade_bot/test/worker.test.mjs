@@ -6,6 +6,7 @@ import worker, { parseExpiry, fmtDate, usd, resultPct, cleanTicker } from "../sr
 import { COMMANDS } from "../src/commands.js";
 
 const OWNER = "111";
+console.log = () => {}; // the worker logs every step; keep test output readable
 const keys = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
 const publicKeyHex = Buffer.from(await crypto.subtle.exportKey("raw", keys.publicKey)).toString("hex");
 
@@ -22,7 +23,7 @@ function memoryKV() {
   };
 }
 
-let env, calls, livePrice, msgCounter;
+let env, calls, livePrice, msgCounter, lastResult, finnhubDelay, hangDiscord;
 beforeEach(() => {
   env = {
     DISCORD_PUBLIC_KEY: publicKeyHex, DISCORD_APP_ID: "app1", DISCORD_BOT_TOKEN: "bot-token",
@@ -32,10 +33,19 @@ beforeEach(() => {
   calls = [];
   livePrice = 190.12;
   msgCounter = 0;
+  lastResult = null;
+  finnhubDelay = 0;
+  hangDiscord = false;
   globalThis.fetch = async (url, init = {}) => {
     const call = { url: String(url), method: init.method || "GET", body: init.body ? JSON.parse(init.body) : null };
     calls.push(call);
-    if (call.url.startsWith("https://finnhub.io/")) return Response.json({ c: livePrice });
+    if (call.url.startsWith("https://finnhub.io/")) {
+      if (finnhubDelay) await new Promise((r) => setTimeout(r, finnhubDelay));
+      return Response.json({ c: livePrice });
+    }
+    if (hangDiscord && call.url.includes("/channels/")) {
+      return new Promise((_, reject) => init.signal?.addEventListener("abort", () => reject(new Error("aborted"))));
+    }
     if (call.url.includes("/webhooks/")) return new Response(null, { status: 200 });
     if (call.url.endsWith("/threads")) return Response.json({ id: `thread-${msgCounter}` });
     if (call.url.endsWith("/messages")) return Response.json({ id: `msg-${++msgCounter}` });
@@ -57,15 +67,18 @@ async function send(payload, { sign = true } = {}) {
   const res = await worker.fetch(new Request("https://bot.example/", { method: "POST", headers, body }), env,
     { waitUntil: (p) => pending.push(p) });
   await Promise.all(pending);
-  return { res, data: res.headers.get("Content-Type")?.includes("json") ? await res.json() : await res.text() };
+  lastResult = { res, data: res.headers.get("Content-Type")?.includes("json") ? await res.json() : await res.text() };
+  return lastResult;
 }
 
 const command = (name, options = {}, user = OWNER) => ({
-  type: 2, token: "tok", member: { user: { id: user } },
+  type: 2, token: "tok", application_id: "app1", member: { user: { id: user } },
   data: { name, options: Object.entries(options).map(([n, value]) => ({ name: n, value })) },
 });
 const posts = () => calls.filter((c) => c.url.startsWith("https://discord.com/api/v10/channels/") && c.url.endsWith("/messages"));
-const lastReply = () => calls.filter((c) => c.url.includes("/webhooks/")).at(-1)?.body.content;
+// The reply you see: sent directly (type 4) when the work is quick, otherwise by editing "thinking...".
+const lastReply = () => (lastResult?.data?.type === 4 ? lastResult.data.data.content
+  : calls.filter((c) => c.url.includes("/webhooks/")).at(-1)?.body.content);
 
 function checkEmbed(e) {
   assert.ok(e.title.length <= 256 && (e.description || "").length <= 4096);
@@ -91,7 +104,9 @@ test("only the owner can post", async () => {
 
 test("buy with live price posts to #trade, pings, opens a thread, saves the position", async () => {
   const { data } = await send(command("buy", { ticker: "$nvda", style: "swing" }));
-  assert.deepEqual(data, { type: 5, data: { flags: 64 } });
+  assert.equal(data.type, 4, "quick commands answer directly, with no 'thinking...' step");
+  assert.equal(data.data.flags, 64);
+  assert.ok(!calls.some((c) => c.url.includes("/webhooks/")), "no edit needed");
   const [p] = posts();
   assert.ok(p.url.includes("/channels/trade-ch/"));
   assert.equal(p.body.content, "<@&trade-role>");
@@ -244,4 +259,30 @@ test("command definitions follow Discord's rules", () => {
       else assert.ok(!seenOptional, `${c.name}: required options must come before optional ones`);
     }
   }
+});
+
+test("slow commands fall back to 'thinking...' and then edit the reply", async () => {
+  env.REPLY_BUDGET_MS = "5";
+  finnhubDelay = 40;
+  const { data } = await send(command("buy", { ticker: "NVDA", style: "swing" }));
+  assert.deepEqual(data, { type: 5, data: { flags: 64 } });
+  const edit = calls.filter((c) => c.url.includes("/webhooks/")).at(-1);
+  assert.equal(edit.method, "PATCH");
+  assert.ok(edit.url.endsWith("/webhooks/app1/tok/messages/@original"));
+  assert.match(edit.body.content, /^Posted: Bought NVDA · Swing/);
+});
+
+test("a stuck Discord request becomes a clear error instead of endless 'thinking...'", async () => {
+  env.REPLY_BUDGET_MS = "5";
+  env.FETCH_TIMEOUT_MS = "30";
+  hangDiscord = true;
+  await send(command("buy", { ticker: "NVDA", style: "swing", price: 100 }));
+  assert.match(lastReply(), /Discord didn't answer in time/);
+  assert.ok(!env.TRADES.m.has("pos:T1"), "nothing saved when the post didn't go through");
+});
+
+test("/positions answers directly", async () => {
+  const { data } = await send(command("positions"));
+  assert.equal(data.type, 4);
+  assert.equal(data.data.content, "You have no open positions.");
 });

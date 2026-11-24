@@ -10,6 +10,8 @@ const NOT_ADVICE = "Not financial advice";
 const STYLES = { day: "Day trade", swing: "Swing", medium: "Medium-term", long: "Long-term hold" };
 const COLORS = { long: 0x22c55e, short: 0xf97316, hold: 0x3b82f6, win: 0x22c55e, loss: 0xef4444, note: 0x64748b };
 const EPHEMERAL = 64;
+const REPLY_BUDGET_MS = 2200;   // answer directly if the work is done within this (Discord allows 3 s)
+const FETCH_TIMEOUT_MS = 8000;  // give up on a stuck Discord or Finnhub request after this
 
 class UserError extends Error {}
 
@@ -38,12 +40,23 @@ export default {
     if (interaction.type !== 2) return reply("That action isn't supported.");
     if (!isOwner) return reply("Only the server owner can post trades.");
 
-    // Acknowledge right away (Discord allows 3 seconds), then post and update the reply.
-    ctx.waitUntil(
-      handleCommand(interaction, env)
-        .catch((err) => (err instanceof UserError ? err.message : `Something went wrong: ${err.message || err}`))
-        .then((message) => editReply(env, interaction, message)),
-    );
+    // Do the work, and answer directly if it finishes in time. Only slow commands fall back to
+    // "thinking..." plus an edit afterwards, because that edit is the step that can go missing
+    // on Workers (see github.com/discord/discord-api-docs/issues/7936).
+    const name = interaction.data?.name;
+    log("command", { name });
+    const work = handleCommand(interaction, env).catch((err) => {
+      log("command failed", { name, error: String(err.message || err), expected: err instanceof UserError });
+      return err instanceof UserError ? err.message : `Something went wrong: ${err.message || err}`;
+    });
+    const budget = Number(env.REPLY_BUDGET_MS || REPLY_BUDGET_MS);
+    const finished = await Promise.race([work.then((message) => ({ message })), sleep(budget).then(() => null)]);
+    if (finished) {
+      log("replied directly", { name });
+      return reply(finished.message);
+    }
+    log("deferred", { name });
+    ctx.waitUntil(work.then((message) => editReply(env, interaction, message)));
     return json({ type: 5, data: { flags: EPHEMERAL } });
   },
 };
@@ -344,8 +357,17 @@ function focusedValue(interaction) {
 // ------------------------------------------------------------------ outside services
 
 async function quote(env, ticker) {
-  const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(ticker)}&token=${env.FINNHUB_API_KEY}`);
-  if (!r.ok) throw new UserError(`Couldn't get a live price for ${ticker} right now. Add the price yourself.`);
+  let r;
+  try {
+    r = await timedFetch(env, `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(ticker)}&token=${env.FINNHUB_API_KEY}`);
+  } catch (err) {
+    log("finnhub failed", { ticker, error: String(err.message || err) });
+    throw new UserError(`Couldn't get a live price for ${ticker} right now. Add the price yourself.`);
+  }
+  if (!r.ok) {
+    log("finnhub failed", { ticker, status: r.status });
+    throw new UserError(`Couldn't get a live price for ${ticker} right now. Add the price yourself.`);
+  }
   const data = await r.json();
   if (!(data.c > 0)) throw new UserError(`No live price found for ${ticker}. Check the ticker, or add the price yourself.`);
   return data.c;
@@ -353,11 +375,18 @@ async function quote(env, ticker) {
 
 async function discord(env, method, path, body) {
   for (let attempt = 0; attempt < 3; attempt++) {
-    const r = await fetch(`${API}${path}`, {
-      method,
-      headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`, "Content-Type": "application/json" },
-      body: body ? JSON.stringify(body) : undefined,
-    });
+    let r;
+    try {
+      r = await timedFetch(env, `${API}${path}`, {
+        method,
+        headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`, "Content-Type": "application/json" },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+    } catch (err) {
+      log("discord failed", { method, path: safePath(path), error: String(err.message || err) });
+      throw new UserError("Discord didn't answer in time. Check the channel before trying again, in case it posted anyway.");
+    }
+    log("discord", { method, path: safePath(path), status: r.status });
     if (r.status === 429) {
       const wait = Number((await r.json().catch(() => ({}))).retry_after || 1);
       await new Promise((res) => setTimeout(res, Math.min(wait, 5) * 1000));
@@ -371,11 +400,40 @@ async function discord(env, method, path, body) {
 }
 
 async function editReply(env, interaction, content) {
-  await fetch(`${API}/webhooks/${env.DISCORD_APP_ID}/${interaction.token}/messages/@original`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content: String(content).slice(0, 2000), allowed_mentions: { parse: [] } }),
-  });
+  const appId = interaction.application_id || env.DISCORD_APP_ID;
+  try {
+    const r = await timedFetch(env, `${API}/webhooks/${appId}/${interaction.token}/messages/@original`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: String(content).slice(0, 2000), allowed_mentions: { parse: [] } }),
+    });
+    log("edited reply", { status: r.status, ...(r.ok ? {} : { body: (await r.text()).slice(0, 200) }) });
+  } catch (err) {
+    log("edit reply failed", { error: String(err.message || err) });
+  }
+}
+
+async function timedFetch(env, url, init = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error("timed out")), Number(env.FETCH_TIMEOUT_MS || FETCH_TIMEOUT_MS));
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Logs show up in Cloudflare under Workers & Pages > fiscal-trade-bot > Logs. Never log tokens.
+function log(event, details = {}) {
+  console.log(JSON.stringify({ event, ...details }));
+}
+
+function safePath(path) {
+  return path.replace(/\/webhooks\/[^/]+\/[^/]+/, "/webhooks/<app>/<token>");
 }
 
 export async function verifySignature(publicKeyHex, signatureHex, timestamp, body) {
