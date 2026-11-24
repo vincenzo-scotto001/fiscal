@@ -1,0 +1,9 @@
+{
+  "name": "fiscal-trade-bot",
+  "private": true,
+  "type": "module",
+  "description": "Discord slash commands for Fiscal's #trade and #invest alerts, on Cloudflare Workers",
+  "scripts": {
+    "test": "node --test"
+  }
+}

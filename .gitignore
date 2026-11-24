@@ -3,3 +3,7 @@ __pycache__/
 .env
 .state/
 dry-run-output/
+trade_bot/wrangler.toml
+trade_bot/secrets.json
+trade_bot/.wrangler/
+node_modules/
