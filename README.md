@@ -175,6 +175,9 @@ The bot runs on **Cloudflare Workers' free plan**, because GitHub can't receive 
 
 **8. Try it.** Type `/positions` in any channel. You should get a private "You have no open positions." reply. Your next `/buy` posts for real.
 
+**If a command misbehaves:** go to Cloudflare → Workers & Pages → **fiscal-trade-bot** → **Logs**. Every command logs each step: the command name, each Discord and Finnhub call with its status, and any error. Tokens are never logged.
+Quick commands answer directly. Slow ones show "thinking…" first and are filled in a moment later, and any call stuck for 8 seconds turns into an error message instead of waiting forever.
+
 ---
 
 ## Making changes

@@ -73,6 +73,10 @@ INVEST_CHANNEL_ID = ${q(env.INVEST_CHANNEL_ID)}
 TRADE_ROLE_ID = ${q(env.TRADE_ROLE_ID)}
 INVEST_ROLE_ID = ${q(env.INVEST_ROLE_ID)}
 
+# Keep logs so problems can be traced: Workers & Pages > fiscal-trade-bot > Logs.
+[observability]
+enabled = true
+
 [[kv_namespaces]]
 binding = "TRADES"
 id = ${q(ns.id)}
