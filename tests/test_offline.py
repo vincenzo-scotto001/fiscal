@@ -277,4 +277,32 @@ assert mornings >= 180 and results >= 180 and weeks >= 34
 # results with no actuals yet must stay retryable (returns False)
 assert fb.TASKS["earnings-results"].__name__ == "earnings_results"
 assert fb.next_monday(dt.date(2026, 11, 22)) == dt.date(2026, 11, 23)
+# The ticker loop: a tick roughly every 30 minutes (30 min wait + up to 3 min of queueing),
+# starting at a random time. Every post goes out once per day, within about 35 minutes of its
+# window opening, and never outside its window.
+tick_rng = random.Random(11)
+for trial in range(20):
+    now = dt.datetime(2026, 11, 22, 12, tzinfo=UTC) + dt.timedelta(minutes=tick_rng.randint(0, 59))
+    posted, log = {}, []
+    while now < dt.datetime(2026, 11, 29, 12, tzinfo=UTC):
+        local = now.astimezone(fb.ET)
+        todo, _ = fb.plan_auto(local, posted)
+        for task in todo:
+            posted[task] = local.date().isoformat()
+            log.append((local, task))
+        now += dt.timedelta(minutes=30, seconds=tick_rng.randint(10, 180))
+    count = {}
+    for local, task in log:
+        count[(local.date(), task)] = count.get((local.date(), task), 0) + 1
+    assert max(count.values()) == 1
+    assert sum(t == "macro-morning" for _, t in log) == 5 and sum(t == "earnings-results" for _, t in log) == 5
+    assert sum(t == "earnings-week" for _, t in log) == 1
+    opens = {"macro-morning": (7, 41), "earnings-results": (20, 7), "earnings-week": (18, 7)}
+    for local, task in log:
+        if task in opens:
+            h, m = opens[task]
+            late = (local.hour * 60 + local.minute) - (h * 60 + m)
+            assert 0 <= late <= 35, (task, local)
+print("ticker every ~30 min: every post once a day, within 35 minutes of its window opening (20 random starts)")
+
 print("\nALL TESTS PASSED")

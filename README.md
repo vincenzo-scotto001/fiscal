@@ -104,6 +104,20 @@ Run `check-feeds` afterwards to confirm the new source works.
 
 ---
 
+## Scheduling: the Fiscal ticker
+GitHub's own scheduler skips most scheduled runs on this repo (about 3% ran on Nov 22–23). So a workflow called **Fiscal ticker** keeps things running instead:
+- Each tick asks **Fiscal feeds** and **Fiscal media feeds** to post whatever is due (`task: auto`), then queues the next tick.
+- The queued tick waits **30 minutes** in the `ticker-30m` environment before running, so posts land within about 30 minutes of their target time.
+- The bots remember what they've posted, so nothing doubles. That includes the older 15-minute schedules, which stay in place as extra chances.
+
+**One-time setup:** Settings → Environments → **New environment**, named `ticker-30m`. Tick **Wait timer**, set it to `30`, and save. (Wait timers are free only on public repos.)
+
+**Start or restart the loop:** Actions → **Fiscal ticker** → Run workflow, with "wait" unticked. The loop restarts itself if GitHub's scheduler ever fires the backup schedule, but if the Actions tab shows no Fiscal ticker run in the last hour, start it by hand.
+
+**Keep the repo public.** On a private repo the wait timer is ignored. The ticker notices that and stops itself. Private would also need about 4,000+ paid Actions minutes a month.
+
+---
+
 ## Making changes
 Work on a branch and open a pull request instead of pushing to `main`.
 Before opening it, run `python tests/test_offline.py` and `python tests/test_feeds_offline.py`. They run every post type against sample data.
