@@ -118,9 +118,68 @@ GitHub's own scheduler skips most scheduled runs on this repo (about 3% ran on N
 
 ---
 
+# Trade alerts: slash commands for #trade and #invest
+
+You post trades from Discord, on your phone or desktop, with slash commands. The bot posts a clean card in **#trade** or **#invest** and pings the alert role. It never shows position size, share count or contract count, only what you bought or sold, the prices and the result.
+
+| Command | What it posts |
+|---|---|
+| `/buy ticker style [price]` | "Bought NVDA · Swing" in #trade. With style **Long-term hold**, it posts "New long-term hold" in #invest instead. Leave the price blank to use the live price. |
+| `/short ticker style [price]` | "Shorted TSLA · Swing" in #trade. Closing it posts "Covered", and a falling price counts as a gain. |
+| `/option ticker type strike expiry price style` | "Bought TSLA $250 call · Day trade", with the expiry, the contract price and the stock's live price. |
+| `/trim position [price]` | "Trimmed NVDA" in the trade's thread only, with no ping. The position stays open. |
+| `/close position [price]` | "Sold NVDA ▲ +10.4%" in the channel with a ping, and in the thread. |
+| `/positions` | Your open positions with live moves. Only you can see the reply. |
+
+`position` is a pick-list of your open trades. The commands only appear for you, and the bot refuses anyone else. Each trade gets a number and its own discussion thread.
+The bot runs on **Cloudflare Workers' free plan**, because GitHub can't receive Discord commands in real time. Open positions are stored in Cloudflare, never in this repo. Merging changes under `trade_bot/` redeploys it automatically.
+
+### One-time setup (about 20 minutes)
+**1. Create the Discord bot** at discord.com/developers/applications → **New Application** (e.g. "Fiscal Trades").
+- **General Information:** copy the **Application ID** and the **Public Key**.
+- **Bot:** click **Reset Token** and copy the token. Leave all the "Privileged Gateway Intents" off.
+- **Installation** (or OAuth2 → URL Generator): choose scopes `bot` and `applications.commands`, and bot permissions **View Channels, Send Messages, Embed Links, Create Public Threads, Send Messages in Threads, Mention Everyone** (needed to ping the alert roles). Open the link and add the bot to Fiscal.
+
+**2. Let it post in the read-only channels.** For #trade and #invest: ⚙️ Edit Channel → Permissions → add the bot's role → allow **Send Messages, Embed Links, Create Public Threads, Send Messages in Threads**.
+
+**3. Copy the IDs.** In Discord, go to User Settings → Advanced and turn on **Developer Mode**. Then right-click and choose **Copy ID** on:
+- the server icon (server ID)
+- your own name (your user ID)
+- #trade and #invest
+- the **Trade Alerts** and **Invest Alerts** roles (create them under Server Settings → Roles if you haven't)
+
+**4. Create a free Cloudflare account** at dash.cloudflare.com.
+- Open **Workers & Pages** once. The first time, it asks you to pick a `workers.dev` subdomain.
+- Copy your **Account ID** from the Workers & Pages overview page.
+- Go to **My Profile → API Tokens → Create Token**, use the **Edit Cloudflare Workers** template, select your account, then create it and copy the token.
+
+**5. Add them to GitHub.** Settings → Secrets and variables → Actions:
+
+| Tab | Name | Value |
+|---|---|---|
+| Secrets | `CLOUDFLARE_API_TOKEN` | the Cloudflare token |
+| Secrets | `CLOUDFLARE_ACCOUNT_ID` | your Cloudflare Account ID |
+| Secrets | `DISCORD_BOT_TOKEN` | the bot token |
+| Variables | `DISCORD_APP_ID` | Application ID |
+| Variables | `DISCORD_PUBLIC_KEY` | Public Key |
+| Variables | `DISCORD_GUILD_ID` | server ID |
+| Variables | `DISCORD_OWNER_ID` | your user ID |
+| Variables | `TRADE_CHANNEL_ID` / `INVEST_CHANNEL_ID` | the two channel IDs |
+| Variables | `TRADE_ROLE_ID` / `INVEST_ROLE_ID` | the two role IDs |
+
+(`FINNHUB_API_KEY` is already set from step 1 of this README.)
+
+**6. Deploy.** Go to Actions → **Deploy trade bot** → Run workflow. The "Deploy to Cloudflare" step prints the bot's address, like `https://fiscal-trade-bot.<your-subdomain>.workers.dev`.
+
+**7. Connect Discord to it.** Back in the Developer Portal → General Information → **Interactions Endpoint URL**: paste the address and click **Save Changes**. Discord checks it on the spot.
+
+**8. Try it.** Type `/positions` in any channel. You should get a private "You have no open positions." reply. Your next `/buy` posts for real.
+
+---
+
 ## Making changes
 Work on a branch and open a pull request instead of pushing to `main`.
-Before opening it, run `python tests/test_offline.py` and `python tests/test_feeds_offline.py`. They run every post type against sample data.
+Before opening it, run `python tests/test_offline.py`, `python tests/test_feeds_offline.py`, and `node --test` inside `trade_bot/`. They run every post type and command against sample data.
 
 ## Cost
 $0, because the repo is public and GitHub Actions is free for public repos. **Keep it public:** the 15-minute checks add up to about 4,000 runs a month, well over the 2,000 free minutes a private repo gets. If it ever goes private, change the media feeds back to hourly (`23 * * * *`) and give each fiscal post just one or two chances.

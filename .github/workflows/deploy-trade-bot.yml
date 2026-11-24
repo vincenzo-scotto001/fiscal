@@ -1,0 +1,74 @@
+name: Deploy trade bot
+
+# Deploys the /buy, /short, /option, /trim, /close and /positions bot (trade_bot/) to
+# Cloudflare Workers and registers the commands with Discord. Runs when trade_bot/ changes on
+# main, or from Actions > Deploy trade bot > Run workflow. Until every setting in
+# README > Trade alerts is filled in, it runs the tests and skips the deploy.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'trade_bot/**'
+      - '.github/workflows/deploy-trade-bot.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-trade-bot
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: trade_bot
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+      FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+      DISCORD_APP_ID: ${{ vars.DISCORD_APP_ID }}
+      DISCORD_PUBLIC_KEY: ${{ vars.DISCORD_PUBLIC_KEY }}
+      DISCORD_GUILD_ID: ${{ vars.DISCORD_GUILD_ID }}
+      OWNER_ID: ${{ vars.DISCORD_OWNER_ID }}
+      TRADE_CHANNEL_ID: ${{ vars.TRADE_CHANNEL_ID }}
+      INVEST_CHANNEL_ID: ${{ vars.INVEST_CHANNEL_ID }}
+      TRADE_ROLE_ID: ${{ vars.TRADE_ROLE_ID }}
+      INVEST_ROLE_ID: ${{ vars.INVEST_ROLE_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Test
+        run: node --test
+
+      - name: Check setup
+        id: setup
+        run: node scripts/prepare-deploy.mjs --check
+
+      - name: Prepare config (creates the position storage on first deploy)
+        if: steps.setup.outputs.ready == 'true'
+        run: node scripts/prepare-deploy.mjs
+
+      - name: Deploy to Cloudflare
+        if: steps.setup.outputs.ready == 'true'
+        run: npx --yes wrangler@4 deploy
+
+      - name: Upload bot secrets
+        if: steps.setup.outputs.ready == 'true'
+        run: |
+          node -e 'require("fs").writeFileSync("secrets.json", JSON.stringify({DISCORD_BOT_TOKEN: process.env.DISCORD_BOT_TOKEN, FINNHUB_API_KEY: process.env.FINNHUB_API_KEY}))'
+          npx --yes wrangler@4 secret bulk secrets.json
+          rm -f secrets.json
+
+      - name: Register slash commands
+        if: steps.setup.outputs.ready == 'true'
+        run: node scripts/register-commands.mjs
