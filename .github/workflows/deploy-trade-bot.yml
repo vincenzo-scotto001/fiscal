@@ -1,7 +1,8 @@
 name: Deploy trade bot
 
-# Deploys the /buy, /short, /option, /trim, /close and /positions bot (trade_bot/) to
-# Cloudflare Workers and registers the commands with Discord. Runs when trade_bot/ changes on
+# Deploys the Fiscal bot (trade_bot/): /buy, /short, /option, /trim, /close and /positions for
+# trades, plus /ask-fiscal and /bull-bear for everyone, to Cloudflare Workers, and registers the
+# commands with Discord. Runs when trade_bot/ changes on
 # main, or from Actions > Deploy trade bot > Run workflow. Until every setting in
 # README > Trade alerts is filled in, it runs the tests and skips the deploy.
 
@@ -32,6 +33,8 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
       FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
       DISCORD_APP_ID: ${{ vars.DISCORD_APP_ID }}
       DISCORD_PUBLIC_KEY: ${{ vars.DISCORD_PUBLIC_KEY }}
       DISCORD_GUILD_ID: ${{ vars.DISCORD_GUILD_ID }}
@@ -40,6 +43,9 @@ jobs:
       INVEST_CHANNEL_ID: ${{ vars.INVEST_CHANNEL_ID }}
       TRADE_ROLE_ID: ${{ vars.TRADE_ROLE_ID }}
       INVEST_ROLE_ID: ${{ vars.INVEST_ROLE_ID }}
+      PREMIUM_ROLE_ID: ${{ vars.PREMIUM_ROLE_ID }}
+      AI_DAILY_CAP: ${{ vars.AI_DAILY_CAP }}
+      OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
     steps:
       - uses: actions/checkout@v4
 
@@ -65,7 +71,7 @@ jobs:
       - name: Upload bot secrets
         if: steps.setup.outputs.ready == 'true'
         run: |
-          node -e 'require("fs").writeFileSync("secrets.json", JSON.stringify({DISCORD_BOT_TOKEN: process.env.DISCORD_BOT_TOKEN, FINNHUB_API_KEY: process.env.FINNHUB_API_KEY}))'
+          node -e 'const names = ["DISCORD_BOT_TOKEN", "FINNHUB_API_KEY", "OPENAI_API_KEY", "FRED_API_KEY"]; require("fs").writeFileSync("secrets.json", JSON.stringify(Object.fromEntries(names.filter((n) => process.env[n]).map((n) => [n, process.env[n]]))))'
           npx --yes wrangler@4 secret bulk secrets.json
           rm -f secrets.json
 

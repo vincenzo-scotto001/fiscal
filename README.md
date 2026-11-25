@@ -180,6 +180,42 @@ Quick commands answer directly. Slow ones show "thinking…" first and are fille
 
 ---
 
+# Fiscal AI: /ask-fiscal and /bull-bear
+
+Two commands every member can use, run by the same bot. They use OpenAI (`gpt-6.2-sol`) with your API key.
+
+| Command | What happens |
+|---|---|
+| `/ask-fiscal question` | The bot posts "**@member asked:** …" in the channel, opens a thread under it, and answers there a few seconds later, pinging the member. |
+| `/bull-bear ticker` | A card in the channel it's run in: price, % today, 52-week range, P/E and next earnings, then exactly 3 bull and 3 bear points, plus a thread with the recent headlines. If someone already asked for that ticker today, they get a link to that card instead (it doesn't count toward their limit). |
+
+**What the AI is told:** explain, never advise. No buy or sell calls, price targets, predictions or position sizes, and finance topics only (off-topic questions get a one-line redirect and don't count). Before each answer the bot fetches live data, and the model may only use numbers from it: Finnhub for stocks (quote, company profile, basic financials, earnings, analyst ratings, news), FRED for the economy (10-year and 2-year yields, fed funds rate, VIX, unemployment, CPI inflation) and CoinGecko for crypto questions. Each answer's footer says which data was used, when, "AI-generated · Not financial advice", and how many uses the member has left.
+
+**Limits:** members get 3 questions and 3 bull/bears a day, reset at midnight Eastern. You and anyone with the Premium role are unlimited. A server-wide cap of 50 AI calls a day (you're not held to it) protects your OpenAI bill.
+
+**Cost:** about a cent per use, so at most about 50–60 cents a day at the cap, and much less in practice.
+
+### Setup (about 5 minutes)
+1. **OpenAI key:** at platform.openai.com, create a project for Fiscal and an API key in it. In the project's settings, set a monthly **budget**, so a surprise can't run up the bill.
+2. **Premium role:** in Discord, Server Settings → Roles → create **Premium** (or use your existing paid role) and **Copy ID**.
+3. **Add them to GitHub** (Settings → Secrets and variables → Actions):
+
+| Tab | Name | Value |
+|---|---|---|
+| Secrets | `OPENAI_API_KEY` | the OpenAI key |
+| Variables | `PREMIUM_ROLE_ID` | the Premium role ID |
+| Variables (optional) | `AI_DAILY_CAP` | server-wide AI calls a day, default 50 |
+| Variables (optional) | `OPENAI_MODEL` | default `gpt-6.2-sol` |
+
+`FRED_API_KEY` and `FINNHUB_API_KEY` are already set from step 1 of this README.
+
+4. **Deploy:** merging changes under `trade_bot/` deploys automatically. If you add or change a secret later, go to Actions → **Deploy trade bot** → Run workflow.
+5. **Try it:** `/ask-fiscal What does an inverted yield curve mean?` in #chat.
+
+The commands refuse to post in channels the member can't post in (like #trade and #invest), so read-only channels stay clean. If something goes wrong, the Cloudflare logs show each step, including how long OpenAI took and how many tokens it used.
+
+---
+
 ## Making changes
 Work on a branch and open a pull request instead of pushing to `main`.
 Before opening it, run `python tests/test_offline.py`, `python tests/test_feeds_offline.py`, and `node --test` inside `trade_bot/`. They run every post type and command against sample data.

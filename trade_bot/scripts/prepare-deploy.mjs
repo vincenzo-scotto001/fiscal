@@ -13,6 +13,8 @@ const VARS = [
   "TRADE_CHANNEL_ID", "INVEST_CHANNEL_ID", "TRADE_ROLE_ID", "INVEST_ROLE_ID",
 ];
 const SECRETS = ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "DISCORD_BOT_TOKEN", "FINNHUB_API_KEY"];
+// Fiscal AI settings. All optional: without OPENAI_API_KEY the AI commands just say they're off.
+const OPTIONAL_VARS = ["PREMIUM_ROLE_ID", "AI_DAILY_CAP", "OPENAI_MODEL"];
 const KV_TITLE = "fiscal-trade-bot-positions";
 
 const GITHUB_NAME = { OWNER_ID: "DISCORD_OWNER_ID" }; // the name used in GitHub > Settings > Variables
@@ -31,6 +33,11 @@ if (process.argv.includes("--check")) {
   if (env.GITHUB_OUTPUT) appendFileSync(env.GITHUB_OUTPUT, `ready=${ready}\n`);
   if (ready) console.log("Trade bot setup is complete.");
   else console.log(`::notice::Trade bot not deployed yet. Still missing ${report}. See README > Trade alerts.`);
+  if (blank("OPENAI_API_KEY")) {
+    console.log("::notice::/ask-fiscal and /bull-bear stay off until the OPENAI_API_KEY secret is added. See README > Fiscal AI.");
+  }
+  if (blank("FRED_API_KEY")) console.log("::notice::No FRED_API_KEY secret, so /ask-fiscal answers without economic data.");
+  if (blank("PREMIUM_ROLE_ID")) console.log("::notice::No PREMIUM_ROLE_ID variable yet, so only you get unlimited Fiscal AI.");
   process.exit(0);
 }
 if (!ready) {
@@ -72,7 +79,7 @@ TRADE_CHANNEL_ID = ${q(env.TRADE_CHANNEL_ID)}
 INVEST_CHANNEL_ID = ${q(env.INVEST_CHANNEL_ID)}
 TRADE_ROLE_ID = ${q(env.TRADE_ROLE_ID)}
 INVEST_ROLE_ID = ${q(env.INVEST_ROLE_ID)}
-
+${OPTIONAL_VARS.filter((k) => !blank(k)).map((k) => `${k} = ${q(env[k])}\n`).join("")}
 # Keep logs so problems can be traced: Workers & Pages > fiscal-trade-bot > Logs.
 [observability]
 enabled = true

@@ -1,6 +1,7 @@
 // Slash command definitions. scripts/register-commands.mjs sends these to Discord on deploy.
-// Option types: 3 = text, 10 = number. default_member_permissions "0" hides the commands from
-// everyone except server admins (the worker also checks it's the owner).
+// Option types: 3 = text, 10 = number. The trade commands have default_member_permissions "0",
+// which hides them from everyone except server admins (the worker also checks it's the owner).
+// The Fiscal AI commands at the end are for every member.
 
 const STYLE_CHOICES = [
   { name: "Day trade", value: "day" },
@@ -74,5 +75,18 @@ export const COMMANDS = [
     name: "positions",
     description: "Show your open positions (only you can see the reply)",
     default_member_permissions: "0",
+  },
+  {
+    name: "ask-fiscal",
+    description: "Ask Fiscal AI about markets, investing or the economy (3 a day, unlimited for Premium)",
+    options: [{
+      type: 3, name: "question", description: "Your question, e.g. What does an inverted yield curve mean?",
+      required: true, min_length: 3, max_length: 500,
+    }],
+  },
+  {
+    name: "bull-bear",
+    description: "Post 3 bull and 3 bear points for a stock (3 a day, unlimited for Premium)",
+    options: [{ ...ticker }],
   },
 ];
