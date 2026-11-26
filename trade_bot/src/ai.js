@@ -129,24 +129,11 @@ async function askFiscal(env, who, where, rawQuestion) {
     content: `**<@${who.id}> asked:** ${question}`,
     allowed_mentions: { parse: [] },
   });
-  let answerIn = where.channelId;
-  let replyTo = asked.id;
-  if (where.canThread) {
-    try {
-      const thread = await discord(env, "POST", `/channels/${where.channelId}/messages/${asked.id}/threads`,
-        { name: clip(`Q: ${question}`, 90), auto_archive_duration: 1440 });
-      answerIn = thread.id;
-      replyTo = null;
-    } catch (err) {
-      log("thread failed", { error: String(err.message || err) }); // answer right under the question instead
-    }
-  }
   await charge(env, quota);
+  // The answer goes straight into the same channel, as a reply to the question (no thread).
   return {
-    message: answerIn !== where.channelId
-      ? `Your question is up. The answer will be in <#${answerIn}> in a few seconds.`
-      : "Your question is up. The answer will appear right under it in a few seconds.",
-    later: () => answerQuestion(env, { who, question, day, quota, answerIn, replyTo }),
+    message: "Your question is up. The answer will appear right under it in a few seconds.",
+    later: () => answerQuestion(env, { who, question, day, quota, answerIn: where.channelId, replyTo: asked.id }),
   };
 }
 
