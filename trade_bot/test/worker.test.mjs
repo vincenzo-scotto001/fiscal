@@ -355,20 +355,20 @@ const patches = () => calls.filter((c) => c.method === "PATCH" && c.url.includes
 const today = () => etDay();
 const nextEarnings = new Date(Date.now() + 30 * 86400e3).toISOString().slice(0, 10);
 
-test("/ask-fiscal: any member can ask; the question is posted, a thread opens, the answer lands there", async () => {
+test("/ask-fiscal: any member can ask; the question is posted and answered right under it in the channel", async () => {
   const { data } = await ask("How does the $NVDA P/E compare with the 10-year yield?");
   assert.equal(data.type, 4);
   assert.equal(data.data.flags, 64, "the confirmation is only visible to the asker");
-  assert.match(data.data.content, /The answer will be in <#thread-1>/);
+  assert.match(data.data.content, /right under it/);
 
   const [question, answer] = posts();
   assert.ok(question.url.endsWith("/channels/chat-ch/messages"));
   assert.equal(question.body.content, "**<@222> asked:** How does the $NVDA P/E compare with the 10-year yield?");
   assert.deepEqual(question.body.allowed_mentions, { parse: [] });
-  const thread = calls.find((c) => c.url.endsWith("/messages/msg-1/threads"));
-  assert.equal(thread.body.name, "Q: How does the $NVDA P/E compare with the 10-year yield?");
+  assert.ok(!calls.some((c) => c.url.endsWith("/threads")), "no thread: the answer stays in the channel");
 
-  assert.ok(answer.url.endsWith("/channels/thread-1/messages"));
+  assert.ok(answer.url.endsWith("/channels/chat-ch/messages"));
+  assert.deepEqual(answer.body.message_reference, { message_id: "msg-1", fail_if_not_exists: false });
   assert.equal(answer.body.content, "<@222>");
   assert.deepEqual(answer.body.allowed_mentions, { users: ["222"] });
   const e = answer.body.embeds[0];
