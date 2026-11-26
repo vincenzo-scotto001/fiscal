@@ -1,19 +1,22 @@
-// Fiscal trade bot: Discord slash commands that post trade alerts to #trade and long-term holds
-// to #invest. Runs on Cloudflare Workers (free plan). Open positions live in Workers KV
-// (binding TRADES), never in the GitHub repo.
+// Fiscal bot: Discord slash commands on Cloudflare Workers (free plan).
+//  - Trade alerts (owner only): post trades to #trade and long-term holds to #invest. Open
+//    positions live in Workers KV (binding TRADES), never in the GitHub repo.
+//  - Fiscal AI (everyone): /ask-fiscal and /bull-bear, in ai.js.
 //
-// Format rule: show what was bought or sold, the price in, the price out and the result in %.
+// Trade card rule: show what was bought or sold, the price in, the price out and the result in %.
 // Never show position size, share count or contract count.
 
-const API = "https://discord.com/api/v10";
-const NOT_ADVICE = "Not financial advice";
+import {
+  API, UserError, NOT_ADVICE, EPHEMERAL, discord, timedFetch, log, usd, signed, trimNum, cleanTicker,
+  fmtDate, optionsOf, json, reply,
+} from "./shared.js";
+import { AI_COMMANDS, handleAiCommand } from "./ai.js";
+
+export { usd, cleanTicker, fmtDate };
+
 const STYLES = { day: "Day trade", swing: "Swing", medium: "Medium-term", long: "Long-term hold" };
 const COLORS = { long: 0x22c55e, short: 0xf97316, hold: 0x3b82f6, win: 0x22c55e, loss: 0xef4444, note: 0x64748b };
-const EPHEMERAL = 64;
 const REPLY_BUDGET_MS = 2200;   // answer directly if the work is done within this (Discord allows 3 s)
-const FETCH_TIMEOUT_MS = 8000;  // give up on a stuck Discord or Finnhub request after this
-
-class UserError extends Error {}
 
 export default {
   async fetch(request, env, ctx) {
@@ -38,28 +41,52 @@ export default {
       return json({ type: 8, data: { choices } });
     }
     if (interaction.type !== 2) return reply("That action isn't supported.");
-    if (!isOwner) return reply("Only the server owner can post trades.");
+
+    // Fiscal AI is for every member; everything else posts trades, so it's the owner's alone.
+    const name = interaction.data?.name;
+    const isAi = AI_COMMANDS.has(name);
+    if (!isAi && !isOwner) return reply("Only the server owner can post trades.");
 
     // Do the work, and answer directly if it finishes in time. Only slow commands fall back to
     // "thinking..." plus an edit afterwards, because that edit is the step that can go missing
-    // on Workers (see github.com/discord/discord-api-docs/issues/7936).
-    const name = interaction.data?.name;
+    // on Workers (see github.com/discord/discord-api-docs/issues/7936). Work that can take
+    // longer, like the AI's answer, comes back as `later` and runs after the reply.
     log("command", { name });
-    const work = handleCommand(interaction, env).catch((err) => {
+    const work = (isAi
+      ? handleAiCommand(interaction, env, { isOwner })
+      : handleCommand(interaction, env).then((message) => ({ message }))
+    ).catch((err) => {
       log("command failed", { name, error: String(err.message || err), expected: err instanceof UserError });
-      return err instanceof UserError ? err.message : `Something went wrong: ${err.message || err}`;
+      return { message: err instanceof UserError ? err.message : `Something went wrong: ${err.message || err}` };
     });
-    const budget = Number(env.REPLY_BUDGET_MS || REPLY_BUDGET_MS);
-    const finished = await Promise.race([work.then((message) => ({ message })), sleep(budget).then(() => null)]);
+    let timer;
+    const budget = new Promise((resolve) => {
+      timer = setTimeout(() => resolve(null), Number(env.REPLY_BUDGET_MS || REPLY_BUDGET_MS));
+    });
+    const finished = await Promise.race([work, budget]);
+    clearTimeout(timer);
     if (finished) {
       log("replied directly", { name });
+      if (finished.later) ctx.waitUntil(runLater(name, finished.later));
       return reply(finished.message);
     }
     log("deferred", { name });
-    ctx.waitUntil(work.then((message) => editReply(env, interaction, message)));
+    ctx.waitUntil(work.then(async (result) => {
+      await editReply(env, interaction, result.message);
+      if (result.later) await runLater(name, result.later);
+    }));
     return json({ type: 5, data: { flags: EPHEMERAL } });
   },
 };
+
+// Background work after the reply. Cloudflare stops it 30 seconds after the reply is sent.
+async function runLater(name, later) {
+  try {
+    await later();
+  } catch (err) {
+    log("background work failed", { name, error: String(err.message || err) });
+  }
+}
 
 // ------------------------------------------------------------------ commands
 
@@ -290,27 +317,7 @@ export function resultPct(pos, exit) {
   return pos.side === "short" ? -change : change;
 }
 
-// ------------------------------------------------------------------ formatting and parsing
-
-export function usd(x) {
-  const digits = x >= 1 ? 2 : Math.min(4, Math.max(2, (String(x).split(".")[1] || "").length));
-  return `$${Number(x).toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
-}
-
-function signed(pct) {
-  const r = Math.round(pct * 10) / 10;
-  return `${r > 0 ? "+" : r < 0 ? "−" : ""}${Math.abs(r).toFixed(1)}%`;
-}
-
-function trimNum(x) {
-  return Number.isInteger(x) ? String(x) : String(Number(x.toFixed(2)));
-}
-
-export function cleanTicker(raw) {
-  const t = String(raw || "").trim().replace(/^\$/, "").toUpperCase();
-  if (!/^[A-Z][A-Z0-9.\-]{0,9}$/.test(t)) throw new UserError(`"${raw}" doesn't look like a ticker.`);
-  return t;
-}
+// ------------------------------------------------------------------ parsing
 
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
@@ -337,19 +344,6 @@ export function parseExpiry(raw, today = new Date()) {
   return date.toISOString().slice(0, 10);
 }
 
-export function fmtDate(iso, today = new Date()) {
-  const date = new Date(`${iso}T12:00:00Z`);
-  const opts = { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" };
-  if (date.getUTCFullYear() !== today.getUTCFullYear()) opts.year = "numeric";
-  return date.toLocaleDateString("en-US", opts);
-}
-
-function optionsOf(interaction) {
-  const out = {};
-  for (const o of interaction.data?.options || []) out[o.name] = o.value;
-  return out;
-}
-
 function focusedValue(interaction) {
   return (interaction.data?.options || []).find((o) => o.focused)?.value || "";
 }
@@ -373,32 +367,6 @@ async function quote(env, ticker) {
   return data.c;
 }
 
-async function discord(env, method, path, body) {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    let r;
-    try {
-      r = await timedFetch(env, `${API}${path}`, {
-        method,
-        headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`, "Content-Type": "application/json" },
-        body: body ? JSON.stringify(body) : undefined,
-      });
-    } catch (err) {
-      log("discord failed", { method, path: safePath(path), error: String(err.message || err) });
-      throw new UserError("Discord didn't answer in time. Check the channel before trying again, in case it posted anyway.");
-    }
-    log("discord", { method, path: safePath(path), status: r.status });
-    if (r.status === 429) {
-      const wait = Number((await r.json().catch(() => ({}))).retry_after || 1);
-      await new Promise((res) => setTimeout(res, Math.min(wait, 5) * 1000));
-      continue;
-    }
-    if (r.status === 403) throw new UserError("The bot isn't allowed to post there. Give it Send Messages, Embed Links and Create Public Threads in #trade and #invest.");
-    if (!r.ok) throw new Error(`Discord returned HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`);
-    return r.status === 204 ? {} : r.json();
-  }
-  throw new Error("Discord kept rate-limiting");
-}
-
 async function editReply(env, interaction, content) {
   const appId = interaction.application_id || env.DISCORD_APP_ID;
   try {
@@ -411,29 +379,6 @@ async function editReply(env, interaction, content) {
   } catch (err) {
     log("edit reply failed", { error: String(err.message || err) });
   }
-}
-
-async function timedFetch(env, url, init = {}) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(new Error("timed out")), Number(env.FETCH_TIMEOUT_MS || FETCH_TIMEOUT_MS));
-  try {
-    return await fetch(url, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-// Logs show up in Cloudflare under Workers & Pages > fiscal-trade-bot > Logs. Never log tokens.
-function log(event, details = {}) {
-  console.log(JSON.stringify({ event, ...details }));
-}
-
-function safePath(path) {
-  return path.replace(/\/webhooks\/[^/]+\/[^/]+/, "/webhooks/<app>/<token>");
 }
 
 export async function verifySignature(publicKeyHex, signatureHex, timestamp, body) {
@@ -451,12 +396,4 @@ function hexToBytes(hex) {
   const clean = String(hex).trim();
   if (!/^([0-9a-f]{2})+$/i.test(clean)) throw new Error("bad hex");
   return new Uint8Array(clean.match(/../g).map((b) => parseInt(b, 16)));
-}
-
-function json(data) {
-  return new Response(JSON.stringify(data), { headers: { "Content-Type": "application/json" } });
-}
-
-function reply(content) {
-  return json({ type: 4, data: { content, flags: EPHEMERAL } });
 }
