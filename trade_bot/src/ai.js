@@ -22,8 +22,7 @@ const TWO_DAYS = 2 * 24 * 3600;
 const ET = "America/New_York";
 const COLORS = { answer: 0x3b82f6, card: 0x64748b };
 const THREAD_TYPES = [10, 11, 12];
-const PERM = { admin: 1n << 3n, send: 1n << 11n, embed: 1n << 14n, threads: 1n << 35n, sendInThreads: 1n << 38n };
-const SUPPRESS_EMBEDS = 4;
+const PERM = { admin: 1n << 3n, send: 1n << 11n, embed: 1n << 14n, sendInThreads: 1n << 38n };
 
 // ------------------------------------------------------------------ instructions for the model
 
@@ -99,12 +98,7 @@ function postingSpot(interaction, isOwner) {
   if (!allows(interaction.app_permissions, sendBit) || !allows(interaction.app_permissions, PERM.embed)) {
     throw new UserError("I can't post in this channel. Try #chat, or ask an admin to let the Fiscal bot send messages and embed links here.");
   }
-  return {
-    guildId: interaction.guild_id,
-    channelId: interaction.channel_id,
-    inThread,
-    canThread: !inThread && allows(interaction.app_permissions, PERM.threads),
-  };
+  return { guildId: interaction.guild_id, channelId: interaction.channel_id };
 }
 
 function allows(perms, bit) {
@@ -250,7 +244,7 @@ async function bullBear(env, who, where, rawTicker) {
   await charge(env, quota);
   return {
     message: `Writing the bull vs bear for ${ticker}. It fills in here in a few seconds.`,
-    later: () => writeBullBear(env, { ticker, quote, day, quota, cacheKey, url, channelId: where.channelId, messageId: card.id, canThread: where.canThread }),
+    later: () => writeBullBear(env, { ticker, quote, day, quota, cacheKey, url, channelId: where.channelId, messageId: card.id }),
   };
 }
 
@@ -284,19 +278,8 @@ async function writeBullBear(env, job) {
     return;
   }
 
+  // Like /ask-fiscal, everything stays in the channel: no thread. Headlines are on the card itself.
   await env.TRADES.put(job.cacheKey, JSON.stringify({ url: job.url, at: Date.now(), done: true }), { expirationTtl: TWO_DAYS });
-  if (!job.canThread) return;
-  try {
-    const thread = await discord(env, "POST", `/channels/${job.channelId}/messages/${job.messageId}/threads`,
-      { name: `${job.ticker} bull vs bear · ${etMonthDay()}`, auto_archive_duration: 10080 });
-    const headlines = headlineList(data.news);
-    if (headlines) {
-      await discord(env, "POST", `/channels/${thread.id}/messages`,
-        { content: headlines, flags: SUPPRESS_EMBEDS, allowed_mentions: { parse: [] } });
-    }
-  } catch (err) {
-    log("bull-bear thread failed", { error: String(err.message || err) }); // the card itself is up
-  }
 }
 
 async function bullBearData(env, ticker, quote) {
@@ -370,6 +353,7 @@ export function bullBearEmbed(ticker, quote, data, points, left) {
     fields: [
       { name: "🐂 Bull case", value: points.bull.map((p) => `• ${p}`).join("\n") },
       { name: "🐻 Bear case", value: points.bear.map((p) => `• ${p}`).join("\n") },
+      ...headlineField(data.news),
     ],
     footer: { text: ["Data: Finnhub", data.forModel.asOf, "AI-generated", NOT_ADVICE, left].join(" · ") },
   };
@@ -384,15 +368,16 @@ function cleanPoint(text) {
   return clip(String(text || "").replace(/^[\s•*\-–]+/, "").replace(/\s+/g, " ").trim(), 220);
 }
 
-function headlineList(news) {
-  const lines = ["Recent headlines (via Finnhub):"];
-  for (const n of (news || []).slice(0, 5)) {
+// Up to 3 recent headlines as links at the bottom of the card (a field holds at most 1024 characters).
+function headlineField(news) {
+  const lines = [];
+  for (const n of (news || []).slice(0, 3)) {
     if (!/^https?:\/\//.test(n.url || "")) continue;
-    const line = `• [${clip(n.headline.replace(/[[\]]/g, ""), 110)}](<${n.url}>)${n.source ? ` · ${n.source}` : ""}`;
-    if (lines.join("\n").length + line.length > 1900) break;
+    const line = `• [${clip(n.headline.replace(/[[\]]/g, ""), 90)}](${n.url})${n.source ? ` · ${n.source}` : ""}`;
+    if ([...lines, line].join("\n").length > 1024) break;
     lines.push(line);
   }
-  return lines.length > 1 ? lines.join("\n") : "";
+  return lines.length ? [{ name: "📰 Recent headlines", value: lines.join("\n") }] : [];
 }
 
 // ------------------------------------------------------------------ daily limits
@@ -597,10 +582,6 @@ function etStamp(now = new Date()) {
     timeZone: ET, month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit",
   });
   return `${text.replace(/ /g, " ")} ET`;
-}
-
-function etMonthDay(now = new Date()) {
-  return now.toLocaleDateString("en-US", { timeZone: ET, month: "short", day: "numeric" });
 }
 
 function shiftDay(day, days) {

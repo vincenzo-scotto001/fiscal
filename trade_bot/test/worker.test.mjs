@@ -458,12 +458,13 @@ test("AI commands stay off until the OpenAI key is set, and trade commands stay 
   assert.equal(posts().length, 0);
 });
 
-test("/bull-bear: placeholder card, then 3 bull and 3 bear points with a data header and a thread", async () => {
+test("/bull-bear: placeholder card, then 3 bull and 3 bear points with a data header, all in the channel", async () => {
   const { data } = await bullBear("nvda");
   assert.equal(data.type, 4);
   assert.match(data.data.content, /Writing the bull vs bear for NVDA/);
 
-  const [card, headlines] = posts();
+  assert.equal(posts().length, 1, "just the card: no thread, no extra messages");
+  const [card] = posts();
   assert.ok(card.url.endsWith("/channels/chat-ch/messages"));
   assert.equal(card.body.embeds[0].title, "Bull vs bear: NVDA");
   assert.match(card.body.embeds[0].description, /Writing the bull and bear case/);
@@ -473,18 +474,16 @@ test("/bull-bear: placeholder card, then 3 bull and 3 bear points with a data he
   const e = edit.body.embeds[0];
   assert.equal(e.title, "Bull vs bear: NVDA (NVIDIA Corp)");
   assert.equal(e.description, `**$190.12** ▲ +2.3% today · 52-wk $86.62–$212.19 · P/E 54.1\nNext earnings ${fmtDate(nextEarnings)}`);
-  assert.deepEqual(e.fields.map((f) => f.name), ["🐂 Bull case", "🐻 Bear case"]);
+  assert.deepEqual(e.fields.map((f) => f.name), ["🐂 Bull case", "🐻 Bear case", "📰 Recent headlines"]);
   assert.equal(e.fields[0].value.split("\n").length, 3);
   assert.equal(e.fields[1].value.split("\n").length, 3);
   assert.ok(e.fields[0].value.includes("• Beat EPS estimates by 4% last quarter."), "stray bullet characters are cleaned up");
   assert.match(e.footer.text, /^Data: Finnhub · .+ ET · AI-generated · Not financial advice · 2 of 3 bull\/bears left today$/);
   assert.ok(JSON.stringify(e).length < 6000);
 
-  const thread = calls.find((c) => c.url.endsWith("/messages/msg-1/threads"));
-  assert.match(thread.body.name, /^NVDA bull vs bear · [A-Z][a-z]{2} \d+$/);
-  assert.ok(headlines.url.endsWith("/channels/thread-1/messages"), "headlines go in the card's thread");
-  assert.equal(headlines.body.flags, 4, "no link previews");
-  assert.equal(headlines.body.content.split("\n")[1], "• [Nvidia beats estimates](<https://example.com/a>) · Reuters", "newest first");
+  assert.ok(!calls.some((c) => c.url.endsWith("/threads")), "no thread, same as /ask-fiscal");
+  assert.equal(e.fields[2].value.split("\n")[0], "• [Nvidia beats estimates](https://example.com/a) · Reuters", "newest first");
+  assert.equal(e.fields[2].value.split("\n").length, 2);
 
   const [call] = openaiCalls();
   assert.deepEqual(call.body.text.format.schema.required, ["bull_1", "bull_2", "bull_3", "bear_1", "bear_2", "bear_3"]);
@@ -542,7 +541,7 @@ test("a slow AI command still finishes: 'thinking...', then the reply, then the 
   assert.deepEqual(data, { type: 5, data: { flags: 64 } });
   const edit = calls.find((c) => c.url.includes("/webhooks/"));
   assert.match(edit.body.content, /Writing the bull vs bear for NVDA/);
-  assert.equal(patches()[0].body.embeds[0].fields.length, 2);
+  assert.equal(patches()[0].body.embeds[0].fields.length, 3);
 });
 
 test("a server-wide daily cap stops AI use for everyone but the owner", async () => {
