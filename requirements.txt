@@ -3,3 +3,4 @@ tzdata
 feedparser>=6.0
 PyYAML>=6.0
 matplotlib>=3.8
+numpy>=1.26

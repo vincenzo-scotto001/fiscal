@@ -15,10 +15,10 @@ const OPENAI_URL = "https://api.openai.com/v1/responses";
 const DEFAULT_MODEL = "gpt-6.2-sol";
 const OPENAI_TIMEOUT_MS = 18000; // Cloudflare stops background work 30 s after the reply
 const DATA_TIMEOUT_MS = 4000;
-const DAILY_LIMIT = { ask: 3, bb: 3 };
-const NOUN = { ask: "questions", bb: "bull/bears" };
+const DAILY_LIMIT = { ask: 3, bb: 3, an: 3 };
+const NOUN = { ask: "questions", bb: "bull/bears", an: "analyses" };
 const DEFAULT_SERVER_CAP = 50;   // model calls a day for the whole server (the owner isn't held to it)
-const TWO_DAYS = 2 * 24 * 3600;
+export const TWO_DAYS = 2 * 24 * 3600;
 const ET = "America/New_York";
 const COLORS = { answer: 0x3b82f6, card: 0x64748b };
 const THREAD_TYPES = [10, 11, 12];
@@ -80,7 +80,7 @@ export async function handleAiCommand(interaction, env, { isOwner }) {
   return bullBear(env, who, where, o.ticker);
 }
 
-function caller(interaction, env, isOwner) {
+export function caller(interaction, env, isOwner) {
   const id = interaction.member?.user?.id || interaction.user?.id;
   const roles = interaction.member?.roles || [];
   const premium = Boolean(env.PREMIUM_ROLE_ID) && roles.includes(String(env.PREMIUM_ROLE_ID).trim());
@@ -382,7 +382,7 @@ function headlineField(news) {
 
 // ------------------------------------------------------------------ daily limits
 
-async function checkQuota(env, kind, who, day) {
+export async function checkQuota(env, kind, who, day) {
   if (!who.isOwner) {
     const cap = Number(env.AI_DAILY_CAP || DEFAULT_SERVER_CAP);
     if ((await readCount(env, `ai:calls:${day}`)) >= cap) {
@@ -399,14 +399,14 @@ async function checkQuota(env, kind, who, day) {
   return { key, kind, used, limit };
 }
 
-const charge = (env, q) => (q.key ? writeCount(env, q.key, q.used + 1) : null);
-const refund = (env, q) => (q.key ? writeCount(env, q.key, q.used) : null);
+export const charge = (env, q) => (q.key ? writeCount(env, q.key, q.used + 1) : null);
+export const refund = (env, q) => (q.key ? writeCount(env, q.key, q.used) : null);
 
-function leftText(q) {
+export function leftText(q) {
   return q.key ? `${q.limit - q.used - 1} of ${q.limit} ${NOUN[q.kind]} left today` : "Unlimited";
 }
 
-async function countModelCall(env, day) {
+export async function countModelCall(env, day) {
   const key = `ai:calls:${day}`;
   await writeCount(env, key, (await readCount(env, key)) + 1);
 }
@@ -420,7 +420,7 @@ async function writeCount(env, key, n) {
   else await env.TRADES.put(key, String(n), { expirationTtl: TWO_DAYS });
 }
 
-async function readJSON(env, key) {
+export async function readJSON(env, key) {
   const raw = await env.TRADES.get(key);
   try {
     return raw ? JSON.parse(raw) : null;
@@ -479,7 +479,7 @@ export function outputText(data) {
 
 // ------------------------------------------------------------------ market data
 
-async function finnhub(env, path, params) {
+export async function finnhub(env, path, params) {
   const qs = new URLSearchParams({ ...params, token: env.FINNHUB_API_KEY || "" });
   const r = await timedFetch(env, `https://finnhub.io/api/v1${path}?${qs}`, {}, dataTimeout(env));
   if (!r.ok) throw new Error(`Finnhub ${path} returned HTTP ${r.status}`);

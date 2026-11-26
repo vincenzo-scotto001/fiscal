@@ -1,7 +1,8 @@
 // Fiscal bot: Discord slash commands on Cloudflare Workers (free plan).
 //  - Trade alerts (owner only): post trades to #trade and long-term holds to #invest. Open
 //    positions live in Workers KV (binding TRADES), never in the GitHub repo.
-//  - Fiscal AI (everyone): /ask-fiscal and /bull-bear, in ai.js.
+//  - Fiscal AI (everyone): /ask-fiscal and /bull-bear, in ai.js, and /analysis, in analysis.js
+//    (the owner's /collar for the SPX analysis lives there too).
 //
 // Trade card rule: show what was bought or sold, the price in, the price out and the result in %.
 // Never show position size, share count or contract count.
@@ -11,6 +12,7 @@ import {
   fmtDate, optionsOf, json, reply,
 } from "./shared.js";
 import { AI_COMMANDS, handleAiCommand } from "./ai.js";
+import { requestAnalysis, setCollar } from "./analysis.js";
 
 export { usd, cleanTicker, fmtDate };
 
@@ -42,19 +44,20 @@ export default {
     }
     if (interaction.type !== 2) return reply("That action isn't supported.");
 
-    // Fiscal AI is for every member; everything else posts trades, so it's the owner's alone.
+    // Fiscal AI and /analysis are for every member; everything else is the owner's alone.
     const name = interaction.data?.name;
     const isAi = AI_COMMANDS.has(name);
-    if (!isAi && !isOwner) return reply("Only the server owner can post trades.");
+    const forMembers = isAi || name === "analysis";
+    if (!forMembers && !isOwner) return reply("Only the server owner can post trades.");
 
     // Do the work, and answer directly if it finishes in time. Only slow commands fall back to
     // "thinking..." plus an edit afterwards, because that edit is the step that can go missing
     // on Workers (see github.com/discord/discord-api-docs/issues/7936). Work that can take
     // longer, like the AI's answer, comes back as `later` and runs after the reply.
     log("command", { name });
-    const work = (isAi
-      ? handleAiCommand(interaction, env, { isOwner })
-      : handleCommand(interaction, env).then((message) => ({ message }))
+    const work = (name === "analysis" ? requestAnalysis(interaction, env, { isOwner })
+      : isAi ? handleAiCommand(interaction, env, { isOwner })
+        : handleCommand(interaction, env).then((message) => ({ message }))
     ).catch((err) => {
       log("command failed", { name, error: String(err.message || err), expected: err instanceof UserError });
       return { message: err instanceof UserError ? err.message : `Something went wrong: ${err.message || err}` };
@@ -108,6 +111,8 @@ export async function handleCommand(interaction, env) {
       return closePosition(env, o.position, o.price);
     case "positions":
       return listPositions(env);
+    case "collar":
+      return setCollar(env, o, parseExpiry);
     default:
       throw new UserError("Unknown command.");
   }

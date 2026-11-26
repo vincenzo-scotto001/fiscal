@@ -35,6 +35,7 @@ jobs:
       FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+      GH_DISPATCH_TOKEN: ${{ secrets.GH_DISPATCH_TOKEN }}
       DISCORD_APP_ID: ${{ vars.DISCORD_APP_ID }}
       DISCORD_PUBLIC_KEY: ${{ vars.DISCORD_PUBLIC_KEY }}
       DISCORD_GUILD_ID: ${{ vars.DISCORD_GUILD_ID }}
@@ -46,6 +47,7 @@ jobs:
       PREMIUM_ROLE_ID: ${{ vars.PREMIUM_ROLE_ID }}
       AI_DAILY_CAP: ${{ vars.AI_DAILY_CAP }}
       OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+      ANALYSIS_CHANNEL_ID: ${{ vars.ANALYSIS_CHANNEL_ID }}
     steps:
       - uses: actions/checkout@v4
 
@@ -71,7 +73,7 @@ jobs:
       - name: Upload bot secrets
         if: steps.setup.outputs.ready == 'true'
         run: |
-          node -e 'const names = ["DISCORD_BOT_TOKEN", "FINNHUB_API_KEY", "OPENAI_API_KEY", "FRED_API_KEY"]; require("fs").writeFileSync("secrets.json", JSON.stringify(Object.fromEntries(names.filter((n) => process.env[n]).map((n) => [n, process.env[n]]))))'
+          node -e 'const names = ["DISCORD_BOT_TOKEN", "FINNHUB_API_KEY", "OPENAI_API_KEY", "FRED_API_KEY", "GH_DISPATCH_TOKEN"]; require("fs").writeFileSync("secrets.json", JSON.stringify(Object.fromEntries(names.filter((n) => process.env[n]).map((n) => [n, process.env[n]]))))'
           npx --yes wrangler@4 secret bulk secrets.json
           rm -f secrets.json
 
