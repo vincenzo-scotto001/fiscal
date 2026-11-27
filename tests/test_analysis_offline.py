@@ -384,17 +384,72 @@ def test_schedule_replay():
         dow = (t.weekday() + 1) % 7
         return ok(fields[0], t.minute) and ok(fields[1], t.hour) and ok(fields[2], t.day) and ok(fields[3], t.month) and ok(fields[4], dow)
 
-    for monday in (dt.date(2027, 1, 4), dt.date(2027, 7, 5)):
-        hits = []
-        t = dt.datetime.combine(monday, dt.time(0, 0), tzinfo=dt.timezone.utc)
-        for _ in range(24 * 60):
-            local = t.astimezone(ab.ET)
-            if any(matches(c, t) for c in crons) and ab.auto_due(local):
-                hits.append(local)
-            t += dt.timedelta(minutes=1)
-        assert len(hits) >= 8, f"{monday}: only {len(hits)} chances"
-        assert hits[0].time() <= dt.time(9, 0), f"{monday}: first chance {hits[0]:%H:%M} ET is after the open"
+    for monday in (dt.date(2027, 1, 4), dt.date(2027, 7, 5)):       # winter and summer weeks
+        for offset in range(5):
+            day = monday + dt.timedelta(days=offset)
+            hits: dict = {}
+            t = dt.datetime.combine(day, dt.time(0, 0), tzinfo=dt.timezone.utc)
+            for _ in range(24 * 60):
+                local = t.astimezone(ab.ET)
+                if any(matches(c, t) for c in crons):
+                    for task in ab.auto_due(local):
+                        hits.setdefault(task, []).append(local)
+                t += dt.timedelta(minutes=1)
+            assert len(hits.get("oi-changes", [])) >= 6, f"{day}: few open-interest chances"
+            assert hits["oi-changes"][0].time() <= dt.time(10, 30), f"{day}: OI first chance too late"
+            if offset == 0:
+                assert len(hits["weekly"]) >= 8 and hits["weekly"][0].time() <= dt.time(9, 0), f"{day}: weekly"
+            else:
+                assert "weekly" not in hits, f"{day}: the outlook is Mondays only"
     print("ok schedule replay")
+
+
+def test_oi_changes():
+    _, _, chains = use_fixtures()
+    sent = []
+    saved = (ab.discord, ab.OI_DIR)
+    ab.discord = lambda method, path, payload, files=None: sent.append((method, path, payload)) or {"id": "x"}
+    os.environ["ANALYSIS_CHANNEL_ID"] = "an-ch"
+    monday = dt.datetime(2026, 11, 30, 10, 10, tzinfo=ab.ET)
+    tuesday = monday + dt.timedelta(days=1)
+    with tempfile.TemporaryDirectory() as tmp:
+        ab.OI_DIR = tmp
+        try:
+            assert ab.task_oi(monday) is True and sent == [], "the first day only saves a snapshot"
+            assert sorted(os.listdir(tmp)) == ["NVDA.json", "SPX.json"]
+            assert ab.task_oi(tuesday) is False and sent == [], "unchanged open interest = not updated yet, retry"
+
+            def bump(chain, root, kind, near, delta, expiry="261218"):
+                spot = chain["data"]["current_price"]
+                opts = [o for o in chain["data"]["options"] if o["option"].startswith(f"{root}{expiry}{kind}")]
+                o = min(opts, key=lambda o: abs(int(o["option"][-8:]) / 1000 - spot * near))
+                o["open_interest"] = max(0.0, o["open_interest"] + delta)
+                return o["option"]
+            new_call = bump(chains["SPX"], "SPX", "C", 1.05, 12000)
+            gone_put = bump(chains["SPX"], "SPX", "P", 0.97, -50_000)
+            bump(chains["NVDA"], "NVDA", "C", 1.02, 3000)
+            assert ab.task_oi(tuesday) is True
+            method, path, payload = sent[-1]
+            assert (method, path) == ("POST", "/channels/an-ch/messages")
+            e = payload["embeds"][0]
+            assert e["title"].startswith("📊 Open-interest changes · Tue, Dec 1") and "since Mon Nov 30" in e["description"]
+            spx = next(f for f in e["fields"] if f["name"].startswith("SPX"))
+            lines = spx["value"].splitlines()
+            strike = int(new_call[-8:]) // 1000
+            assert lines[0].startswith(f"▲ `Dec 18 {strike:,}C` +12.0K · ≈$") and "OTM" in lines[0], lines[0]
+            assert any(l.startswith("▼ `Dec 18") and "P` −" in l for l in lines), lines
+            assert lines[-1].startswith("Net: calls +12.0K · puts −"), lines[-1]
+            assert any(f["name"].startswith("NVDA") for f in e["fields"])
+            assert len(json.dumps(e)) < 6000 and all(len(f["value"]) <= 1024 for f in e["fields"])
+            assert json.load(open(os.path.join(tmp, "SPX.json")))["date"] == "2026-12-01"
+            snap = json.load(open(os.path.join(tmp, "SPX.json")))["oi"]
+            assert snap[new_call] >= 12000 and snap.get(gone_put, 0) < 50_000, "today's open interest is the new baseline"
+            sent.clear()
+            assert ab.task_oi(tuesday) is True and sent == [], "nothing twice in a day"
+            assert ab.task_oi(dt.datetime(2026, 12, 25, 10, 10, tzinfo=ab.ET)) is True and sent == [], "holiday"
+        finally:
+            ab.discord, ab.OI_DIR = saved
+    print("ok open-interest changes")
 
 
 def test_dry_run_saves_charts():

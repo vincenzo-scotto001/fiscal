@@ -1,8 +1,9 @@
 name: Fiscal analysis
 
 # Deep technical + options positioning posts for #analysis (analysis_bot.py).
-#  - auto: the Monday outlook (SPX and NDX), once, from 8:37 AM New York time. The Fiscal ticker
-#    asks for this every ~30 minutes; the cron lines below are backups.
+#  - auto: the Monday outlook (SPX and NDX) from 8:37 AM New York time, and the weekday
+#    open-interest changes from 10:07 AM, once each. The Fiscal ticker asks every ~30 minutes;
+#    the cron lines below are backups.
 #  - request: one /analysis from Discord. The bot starts these itself and fills in the inputs.
 #  - check-analysis: shows what the data sources return and saves the charts as an artifact
 #    (posts nothing, doesn't call OpenAI). Run this first.
@@ -10,9 +11,10 @@ run-name: ${{ inputs.task == 'request' && format('Analysis {0}', inputs.ticker) 
 
 on:
   schedule:
-    # UTC, no timezone key (GitHub ignored it on this repo). Covers the Monday window in both
-    # winter (EST) and summer (EDT) time; analysis_bot only posts inside the window, once a day.
-    - cron: '7,22,37,52 12-16 * * 1'
+    # UTC, no timezone key (GitHub ignored it on this repo). Covers the Monday outlook and the
+    # weekday open-interest windows in winter (EST) and summer (EDT) time; analysis_bot only
+    # posts inside each window, once a day.
+    - cron: '7,22,37,52 12-16 * * 1-5'
   workflow_dispatch:
     inputs:
       task:
@@ -22,6 +24,7 @@ on:
         options:
           - check-analysis
           - weekly
+          - oi-changes
           - auto
           - request
       dry_run:
@@ -72,7 +75,8 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      # Remembers which weekly posts went out today, so the backups don't post twice.
+      # Remembers what went out today (so the backups don't post twice) and yesterday's open
+      # interest (for the daily changes).
       - name: Restore memory
         if: inputs.task != 'request'
         uses: actions/cache/restore@v4
@@ -82,6 +86,7 @@ jobs:
           restore-keys: analysis-state-
 
       - name: Run analysis
+        id: run
         env:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -118,8 +123,9 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      # Saved only when something changed, so the half-hourly checks don't pile up caches.
       - name: Save memory
-        if: always() && inputs.task != 'request'
+        if: always() && inputs.task != 'request' && steps.run.outputs.state_changed == 'true'
         uses: actions/cache/save@v4
         with:
           path: .state

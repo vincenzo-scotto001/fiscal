@@ -8,10 +8,11 @@ Posts to two Discord channels on a schedule, for free (GitHub Actions + Discord 
 | Sunday 6:07 PM | #earnings | 📅 Earnings Week Ahead: biggest reporters each day, before open / after close |
 | Weekdays 7:41 AM | #macro | ☕ Morning Brief: last close for S&P/Nasdaq/Dow/VIX/yields, plus today's data |
 | Weekdays 7:41 AM | #earnings | 📊 Earnings Today: EPS and revenue estimates for today's reporters |
+| Weekdays 4:22 PM | #macro | 🔔 Market Wrap: index ETFs, sector leaders and laggards, megacap movers, VIX and crypto, what's on deck next session |
 | Weekdays 8:07 PM | #earnings | 🧾 Earnings Results: beats and misses vs. estimates |
 
 GitHub often starts scheduled runs late and skips many of them, so each post gets a chance every 15 minutes inside its window.
-The bot only posts inside the right window (morning brief 7 AM–noon, results after 8 PM, week ahead Sunday after 6 PM) and remembers what it already posted, so nothing doubles.
+The bot only posts inside the right window (morning brief 7 AM–noon, market wrap 4:22–8 PM, results after 8 PM, week ahead Sunday after 6 PM) and remembers what it already posted, so nothing doubles.
 Nothing posts on weekends or market holidays, and quiet days are skipped instead of posting an empty message.
 
 ---
@@ -223,6 +224,7 @@ Deep technical and options positioning posts, written in the style of your own #
 | When | What |
 |---|---|
 | Mondays from 8:37 AM ET | SPX and NDX outlooks for the week and the run into OpEx |
+| Weekdays from 10:07 AM ET | 📊 Open-interest changes: for SPX, SPY, QQQ, IWM and big tech, the biggest new positions (▲) and closed ones (▼) since the last session, with contracts, the premium (contracts × 100 × option price) and how far out of the money. Open interest doesn't show whether contracts were bought or sold, and the post says so. No AI, so no cost. Tickers are in `OI_TICKERS` in `analysis_bot.py`. |
 | `/analysis TICKER` (any member) | The same post for any US stock, ETF or index (SPX, NDX, RUT), in #analysis a minute or two later. The member gets a link. 3 a day; you and Premium are unlimited; a ticker already done today just links that post. |
 | `/collar` (you only) | Saves the JPM collar strikes after each quarter-end roll, e.g. `/collar call:6020 put:5245 put_low:4580 expiry:Dec 31`. The SPX posts factor it in. `/collar` alone shows it; `clear:True` removes it. |
 

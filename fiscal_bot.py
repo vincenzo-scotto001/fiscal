@@ -114,7 +114,15 @@ SNAPSHOT = [
     ("DGS10", "10Y Treasury", "yield"),
 ]
 
-COLORS = {"earnings": 0x3B82F6, "results": 0x22C55E, "macro": 0xF59E0B, "brief": 0x8B5CF6}
+# Evening market wrap in #macro (Finnhub quotes; ETFs stand in for the indexes).
+WRAP_INDEXES = [("SPY", "S&P 500"), ("QQQ", "Nasdaq-100"), ("DIA", "Dow"), ("IWM", "Russell 2000")]
+WRAP_SECTORS = [("XLK", "Tech"), ("XLC", "Communication"), ("XLY", "Discretionary"), ("XLP", "Staples"),
+                ("XLF", "Financials"), ("XLV", "Health care"), ("XLI", "Industrials"), ("XLE", "Energy"),
+                ("XLB", "Materials"), ("XLU", "Utilities"), ("XLRE", "Real estate")]
+WRAP_MEGACAPS = ["NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "AVGO", "TSLA", "BRK.B", "JPM", "LLY", "V",
+                 "NFLX", "AMD", "COST"]
+
+COLORS = {"earnings": 0x3B82F6, "results": 0x22C55E, "macro": 0xF59E0B, "brief": 0x8B5CF6, "wrap": 0x0EA5E9}
 NOT_ADVICE = "Not financial advice"
 
 # ===============================================================================
@@ -684,6 +692,92 @@ def macro_morning(today: dt.date) -> None:
     post("DISCORD_WEBHOOK_MACRO", "Fiscal Macro", embed)
 
 
+def finnhub_quote(symbol: str) -> dict | None:
+    try:
+        q = http_get("https://finnhub.io/api/v1/quote", {"symbol": symbol, "token": require_env("FINNHUB_API_KEY")})
+    except RuntimeError as exc:
+        print(f"quote {symbol} failed: {exc}")
+        return None
+    return q if (q.get("c") or 0) > 0 and isinstance(q.get("dp"), (int, float)) else None
+
+
+def arrow(pct: float) -> str:
+    return "▲" if pct > 0 else "▼" if pct < 0 else "•"
+
+
+def next_session(today: dt.date) -> dt.date:
+    d = today + dt.timedelta(days=1)
+    while is_weekend(d) or iso(d) in MARKET_HOLIDAYS:
+        d += dt.timedelta(days=1)
+    return d
+
+
+def market_wrap(today: dt.date) -> None:
+    """After the close: index ETFs, sector leaders and laggards, megacap movers, VIX and crypto,
+    and what's on deck for the next session."""
+    if is_weekend(today) or iso(today) in MARKET_HOLIDAYS:
+        print("market-wrap: market closed today, nothing posted")
+        return
+    idx = [(sym, name, q) for sym, name in WRAP_INDEXES if (q := finnhub_quote(sym))]
+    if not idx:
+        raise RuntimeError("no index quotes from Finnhub")
+    fields = lines_to_fields("📈 Indexes (ETFs)", [f"**{name}** ({sym}) ${q['c']:,.2f} {arrow(q['dp'])} {q['dp']:+.2f}%"
+                                                   for sym, name, q in idx])
+    sectors = sorted([(name, sym, q["dp"]) for sym, name in WRAP_SECTORS if (q := finnhub_quote(sym))], key=lambda x: -x[2])
+    if sectors:
+        fmt = lambda rows: " · ".join(f"{n} ({s}) {p:+.1f}%" for n, s, p in rows)
+        fields += lines_to_fields("🏭 Sectors", [f"▲ Leaders: {fmt(sectors[:3])}", f"▼ Laggards: {fmt(sectors[-3:][::-1])}",
+                                                f"{sum(p > 0 for *_, p in sectors)} of {len(sectors)} sectors up"])
+    movers = sorted([(sym, q["dp"]) for sym in WRAP_MEGACAPS if (q := finnhub_quote(sym))], key=lambda x: -x[1])
+    if len(movers) >= 2:
+        k = min(3, len(movers) // 2)
+        fmt = lambda rows: " · ".join(f"**{s}** {p:+.1f}%" for s, p in rows)
+        fields += lines_to_fields("🚀 Megacap movers", [f"▲ {fmt(movers[:k])}", f"▼ {fmt(movers[-k:][::-1])}"])
+    extra = []
+    try:
+        vix = http_get("https://cdn.cboe.com/api/global/delayed_quotes/options/_VIX.json", {}).get("data") or {}
+        if (vix.get("current_price") or 0) > 0:
+            pct = vix.get("price_change_percent") or 0
+            extra.append(f"**VIX** {vix['current_price']:.2f} {arrow(pct)} {pct:+.2f}%")
+    except RuntimeError as exc:
+        print(f"VIX skipped: {exc}")
+    try:
+        coins = http_get("https://api.coingecko.com/api/v3/simple/price",
+                         {"ids": "bitcoin,ethereum", "vs_currencies": "usd", "include_24hr_change": "true"})
+        for cid, sym in (("bitcoin", "BTC"), ("ethereum", "ETH")):
+            c = coins.get(cid) or {}
+            if c.get("usd"):
+                pct = c.get("usd_24h_change") or 0
+                extra.append(f"**{sym}** ${c['usd']:,.0f} {arrow(pct)} {pct:+.2f}% (24h)")
+    except RuntimeError as exc:
+        print(f"crypto skipped: {exc}")
+    if extra:
+        fields += lines_to_fields("😨 Volatility & crypto", extra)
+    nxt = next_session(today)
+    try:
+        ahead = [f"`{when:>8}` {label}" for when, label, _ in macro_events(nxt, nxt, today).get(iso(nxt), [])]
+    except RuntimeError as exc:
+        print(f"calendar skipped: {exc}")
+        ahead = []
+    try:
+        bmo = [ticker(r) for r in notable(finnhub_earnings(nxt)) if session_of(r) == "bmo"][:8]
+    except RuntimeError as exc:
+        print(f"earnings skipped: {exc}")
+        bmo = []
+    if bmo:
+        ahead.append(f"🌅 Earnings before the open: {', '.join(bmo)}")
+    if iso(nxt) in EARLY_CLOSES:
+        ahead.append(f"⏰ Early close at {EARLY_CLOSES[iso(nxt)]} ET")
+    fields += lines_to_fields(f"🗓️ Next session · {day_label(nxt)}",
+                              ahead or ["No major US data or big earnings before the open."])
+    notes = [", ".join(f"{name} {q['dp']:+.2f}%" for _, name, q in idx) + "."]
+    if iso(today) in EARLY_CLOSES:
+        notes.append(f"⏰ Early close today at {EARLY_CLOSES[iso(today)]} ET.")
+    embed = make_embed(f"🔔 Market Wrap · {day_label(today)}", "\n".join(notes), COLORS["wrap"], fields,
+                       f"Data: Finnhub, Cboe, CoinGecko & FRED · prices when posted · {NOT_ADVICE}")
+    post("DISCORD_WEBHOOK_MACRO", "Fiscal Macro", embed)
+
+
 # ---------------------------------------------------------------- tasks: utilities
 
 def check(today: dt.date) -> None:
@@ -732,6 +826,7 @@ TASKS = {
     "earnings-results": earnings_results,
     "macro-week": macro_week,
     "macro-morning": macro_morning,
+    "market-wrap": market_wrap,
     "check": check,
     "test-post": test_post,
 }
@@ -743,6 +838,7 @@ AUTO_WINDOWS = {
     # name: (weekdays, window opens (hour, minute), closes at this hour, tasks)
     "week": ({6}, (18, 7), 24, ["macro-week", "earnings-week"]),                     # Sunday from 6:07 PM
     "morning": ({0, 1, 2, 3, 4}, (7, 41), 12, ["macro-morning", "earnings-today"]),  # weekdays 7:41 AM-noon
+    "wrap": ({0, 1, 2, 3, 4}, (16, 22), 20, ["market-wrap"]),                       # weekdays 4:22-8 PM
     "results": ({0, 1, 2, 3, 4}, (20, 7), 24, ["earnings-results"]),                # weekdays from 8:07 PM
 }
 STATE_FILE = os.environ.get("FISCAL_STATE_FILE",

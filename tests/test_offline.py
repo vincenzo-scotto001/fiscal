@@ -81,7 +81,18 @@ def fred_release_rows(start):
 SERIES = {"SP500": 6800.0, "NASDAQCOM": 22900.0, "DJIA": 47000.0, "VIXCLS": 17.2, "DGS2": 3.55, "DGS10": 4.10}
 
 
+def fake_quote(sym):
+    h = sum(map(ord, sym))
+    return {"c": 100 + h % 300 + 0.25, "dp": ((h * 7) % 61 - 30) / 10, "pc": 100.0}
+
+
 def fake_http_get(url, params):
+    if "finnhub.io" in url and url.endswith("/quote"):
+        return fake_quote(params["symbol"])
+    if "cdn.cboe.com" in url:
+        return {"data": {"current_price": 17.42, "price_change_percent": -3.21}}
+    if "coingecko" in url:
+        return {"bitcoin": {"usd": 97123.4, "usd_24h_change": 1.234}, "ethereum": {"usd": 3511.0, "usd_24h_change": -0.5}}
     if "finnhub.io" in url:
         return {"earningsCalendar": finnhub_rows(params["from"], many=STRESS)}
     if url.endswith("releases/dates"):
@@ -146,6 +157,8 @@ cases = [
     ("macro-morning", "2026-11-18"),
     ("macro-morning", "2026-11-23"),      # Monday
     ("macro-week", "2026-12-06"),         # FOMC week
+    ("market-wrap", "2026-11-18"),        # a normal Wednesday
+    ("market-wrap", "2026-11-25"),        # day before Thanksgiving: the next session is Friday's early close
 ]
 for task, date in cases:
     out, ps = run(task, date)
@@ -156,7 +169,7 @@ for task, date in cases:
 
 # skips
 for task, date in [("earnings-today", "2026-11-26"), ("earnings-results", "2026-11-21"),
-                   ("macro-morning", "2026-11-22")]:
+                   ("macro-morning", "2026-11-22"), ("market-wrap", "2026-11-26"), ("market-wrap", "2026-11-28")]:
     out, ps = run(task, date)
     assert not ps, f"{task} {date} should skip"
     print(f"\nskip ok: {task} {date}: {out.strip()}")
@@ -165,6 +178,21 @@ for task, date in [("earnings-today", "2026-11-26"), ("earnings-results", "2026-
 out, ps = run("macro-morning", "2026-11-26")
 assert ps and "closed today" in ps[0]["embeds"][0]["description"], out
 print("\nholiday-with-release ok:", ps[0]["embeds"][0]["description"].splitlines()[0])
+
+# market wrap: indexes, sectors ranked, megacap movers, VIX and crypto, and the next session
+out, ps = run("market-wrap", "2026-11-25")
+w = ps[0]["embeds"][0]
+names = [f["name"] for f in w["fields"]]
+assert w["title"] == "🔔 Market Wrap · Wed, Nov 25", w["title"]
+assert names[:4] == ["📈 Indexes (ETFs)", "🏭 Sectors", "🚀 Megacap movers", "😨 Volatility & crypto"], names
+assert names[-1].startswith("🗓️ Next session · Fri, Nov 27"), "Thanksgiving is skipped"
+assert "Early close at 1:00 PM ET" in w["fields"][-1]["value"]
+sectors = w["fields"][1]["value"].splitlines()
+lead = [float(x.split()[-1].rstrip("%")) for x in sectors[0].split(" · ")]
+assert lead == sorted(lead, reverse=True) and sectors[2].endswith("of 11 sectors up"), sectors
+assert "**VIX** 17.42 ▼ -3.21%" in w["fields"][3]["value"] and "**BTC** $97,123" in w["fields"][3]["value"]
+assert w["description"].startswith("S&P 500 ") and "Russell 2000" in w["description"]
+print("\nmarket wrap ok:", w["description"])
 
 # FOMC minutes 3 weeks after Oct 28 decision -> Nov 18
 assert any("minutes" in e[1] for e in fb.fed_events(dt.date(2026, 11, 18)))
@@ -233,6 +261,8 @@ for label, start in (("winter (EST)", dt.datetime(2026, 11, 22, 12, tzinfo=UTC))
     assert all(w.endswith("07:41") for w, t in log if t in ("macro-morning", "earnings-today")), log
     assert all(w.endswith("20:07") for w, t in log if t == "earnings-results"), log
     assert all(w == "Sun 18:07" for w, t in log if t in ("macro-week", "earnings-week")), log
+    assert all(w.endswith("16:22") for w, t in log if t == "market-wrap"), log
+    assert sum(t == "market-wrap" for _, t in log) == 5
     assert sum(t == "macro-morning" for _, t in log) == 5 and sum(t == "earnings-results" for _, t in log) == 5
     assert sum(t == "earnings-week" for _, t in log) == 1
 
@@ -268,6 +298,10 @@ assert max(per_day.values()) == 1, "posted twice in a day"
 assert all((n.hour, n.minute) >= (7, 41) and n.hour < 12 for n, t in log if t == "macro-morning")
 assert all((n.hour, n.minute) >= (20, 7) for n, t in log if t == "earnings-results")
 assert all(n.weekday() == 6 and (n.hour, n.minute) >= (18, 7) for n, t in log if t == "earnings-week")
+assert all((n.hour, n.minute) >= (16, 22) and n.hour < 20 for n, t in log if t == "market-wrap")
+wraps = sum(t == "market-wrap" for _, t in log)
+print(f"   market wraps {wraps}/200")
+assert wraps >= 160
 mornings = sum(t == "macro-morning" for _, t in log)
 results = sum(t == "earnings-results" for _, t in log)
 weeks = sum(t == "earnings-week" for _, t in log)
@@ -297,7 +331,8 @@ for trial in range(20):
     assert max(count.values()) == 1
     assert sum(t == "macro-morning" for _, t in log) == 5 and sum(t == "earnings-results" for _, t in log) == 5
     assert sum(t == "earnings-week" for _, t in log) == 1
-    opens = {"macro-morning": (7, 41), "earnings-results": (20, 7), "earnings-week": (18, 7)}
+    assert sum(t == "market-wrap" for _, t in log) == 5
+    opens = {"macro-morning": (7, 41), "earnings-results": (20, 7), "earnings-week": (18, 7), "market-wrap": (16, 22)}
     for local, task in log:
         if task in opens:
             h, m = opens[task]

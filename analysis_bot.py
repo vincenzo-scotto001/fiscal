@@ -8,8 +8,10 @@ Each post has two charts and a write-up in the owner's house style:
          put wall and gamma flip marked (estimated from Cboe's free delayed option chains)
 
 Tasks
-  auto            posts the weekly outlook when it's due (used by the ticker and the schedule)
+  auto            posts whatever is due (used by the ticker and the schedule): the Monday outlook
+                  and the weekday open-interest changes
   weekly          posts the weekly SPX and NDX outlook now
+  oi-changes      posts the biggest open-interest changes since the last session now
   request         one /analysis request from Discord (the Worker passes the details in)
   check-analysis  fetches data for a few tickers, draws the charts and prints what it found.
                   Posts nothing and doesn't call OpenAI. The charts are saved as a workflow artifact.
@@ -51,8 +53,16 @@ NOT_ADVICE = fb.NOT_ADVICE
 # ============================ SETTINGS YOU CAN EDIT ============================
 
 WEEKLY_TICKERS = ["SPX", "NDX"]          # the Monday outlook posts, in this order
-# Monday before the open. A chance every ~15-30 minutes inside the window, once per day.
-AUTO_WINDOWS = {"weekly": ({0}, (8, 37), 12, ["weekly"])}
+# A chance every ~15-30 minutes inside each window (New York time), once per day.
+AUTO_WINDOWS = {
+    "weekly": ({0}, (8, 37), 12, ["weekly"]),                     # Monday before the open
+    "oi": ({0, 1, 2, 3, 4}, (10, 7), 12, ["oi-changes"]),         # weekdays, once the new open interest is in
+}
+# Daily open-interest changes: the biggest new positions since the last session, per ticker.
+OI_TICKERS = ["SPX", "SPY", "QQQ", "IWM", "NVDA", "TSLA", "AAPL", "MSFT", "AMZN", "META", "GOOGL", "AMD"]
+OI_TOP_NEW = 3                          # biggest increases shown per ticker
+OI_TOP_CLOSED = 1                       # biggest decrease shown per ticker
+OI_MIN_PREMIUM = 250_000                # skip changes worth less than this (contracts x 100 x option price)
 
 OPENAI_MODEL = "gpt-6.2-sol"
 OPENAI_REASONING = "medium"              # deeper than /ask-fiscal; about 3-5 cents a post
@@ -89,6 +99,7 @@ DRY_RUN_DIR = os.environ.get("DRY_RUN_DIR", "dry-run-output")
 UA = "Mozilla/5.0 (compatible; FiscalAnalysisBot/1.0; +https://github.com)"
 STATE_FILE = os.environ.get("ANALYSIS_STATE_FILE",
                             os.path.join(os.path.dirname(os.path.abspath(__file__)), ".state", "analysis.json"))
+OI_DIR = os.path.join(os.path.dirname(STATE_FILE), "oi")   # yesterday's open interest, per ticker
 
 
 class Unavailable(Exception):
@@ -683,6 +694,26 @@ def bs_gamma(S, K, T, iv, r: float = 0.04):
     return np.exp(-0.5 * d1 * d1) / math.sqrt(2 * math.pi) / (S * sq)
 
 
+def years_left(exp_ords: np.ndarray, now: dt.datetime) -> np.ndarray:
+    """Time to each expiry (4 PM New York) in years, at least half a day."""
+    out = {}
+    for e in set(int(x) for x in exp_ords):
+        close = dt.datetime.combine(dt.date.fromordinal(e), dt.time(16, 0), ET)
+        out[e] = max(0.5, (close - now).total_seconds() / 86400) / 365
+    return np.array([out[int(e)] for e in exp_ords])
+
+
+def chain_gamma(spot: float, ch: dict, now: dt.datetime) -> np.ndarray:
+    """Gamma from each option's implied volatility. Cboe rounds its own gamma to 4 decimals, which
+    is too coarse for SPX (about 0.0015 near the money), so its figure is only the fallback."""
+    if len(ch["exp"]) == 0:
+        return ch["gamma"]
+    iv = ch["iv"]
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        g = bs_gamma(spot, ch["strike"], years_left(ch["exp"], now), np.maximum(iv, 0.01))
+    return np.where((iv > 0.01) & np.isfinite(g), g, ch["gamma"])
+
+
 def gamma_flip(spot: float, ch: dict, mask: np.ndarray, now: dt.datetime) -> float | None:
     """Where dealers' estimated net gamma changes sign, re-pricing gamma at prices around spot."""
     sel = mask & (ch["oi"] > 0) & (ch["iv"] > 0.01)
@@ -690,8 +721,7 @@ def gamma_flip(spot: float, ch: dict, mask: np.ndarray, now: dt.datetime) -> flo
         return None
     K, iv, oi = ch["strike"][sel], ch["iv"][sel], ch["oi"][sel]
     sign = np.where(ch["call"][sel], 1.0, -1.0)
-    T = np.array([max(0.5, ((dt.datetime.combine(dt.date.fromordinal(int(e)), dt.time(16, 0), ET) - now).total_seconds()
-                            / 86400)) / 365 for e in ch["exp"][sel]])
+    T = years_left(ch["exp"][sel], now)
     levels = spot * np.linspace(0.9, 1.1, 81)
     prof = np.array([np.sum(sign * bs_gamma(S, K, T, iv) * oi * 100 * S * S * 0.01) for S in levels])
     crossings = []
@@ -743,7 +773,7 @@ def positioning(sym: str, spot: float, ch: dict, now: dt.datetime, chain_time: s
     near = ch["exp"] <= near_end
     far = (ch["exp"] > near_end) & (ch["exp"] <= (today + dt.timedelta(days=366)).toordinal())
     sign = np.where(ch["call"], 1.0, -1.0)
-    gex = sign * ch["gamma"] * ch["oi"] * 100 * spot * spot * 0.01        # $ per 1% move, dealers long calls / short puts
+    gex = sign * chain_gamma(spot, ch, now) * ch["oi"] * 100 * spot * spot * 0.01  # $ per 1% move, dealers long calls / short puts
     dex = ch["delta"] * ch["oi"] * 100 * spot                              # put deltas are negative
     calls, puts = near & ch["call"], near & ~ch["call"]
     call_g, put_g = by_strike(ch, calls, gex), by_strike(ch, puts, gex)
@@ -1480,6 +1510,140 @@ def message_url(guild: str, channel: str, message_id: str) -> str:
     return f"https://discord.com/channels/{guild}/{channel}/{message_id}"
 
 
+# ---------------------------------------------------------------- open-interest changes
+
+def oi_rows(sym: str, raw: list, today: dt.date) -> dict:
+    """option symbol -> (expiry, call?, strike, open interest, mid price) for listed, unexpired options."""
+    roots = CHAIN_ROOTS.get(sym, {sym})
+    out = {}
+    for o in raw:
+        mt = OPT_RE.match(str(o.get("option", "")))
+        if not mt or mt["root"] not in roots:
+            continue
+        exp = dt.datetime.strptime(mt["exp"], "%y%m%d").date()
+        if exp < today or exp > today + dt.timedelta(days=400):
+            continue
+        bid, ask, theo = num(o.get("bid")), num(o.get("ask")), num(o.get("theo"))
+        mid = (bid + ask) / 2 if bid > 0 and ask > 0 else theo if theo > 0 else 0.0
+        oi = num(o.get("open_interest"))
+        out[o["option"]] = (exp, mt["kind"] == "C", int(mt["strike"]) / 1000, int(oi) if math.isfinite(oi) else 0,
+                            mid if math.isfinite(mid) else 0.0)
+    return out
+
+
+def oi_changes(spot: float, rows: dict, prev: dict) -> dict:
+    """Compare today's open interest with the last snapshot ({option: oi})."""
+    moves = []
+    net = {True: 0, False: 0}
+    moved = 0
+    for opt, (exp, call, strike, oi, mid) in rows.items():
+        d = oi - int(prev.get(opt, 0))
+        if not d:
+            continue
+        moved += abs(d)
+        net[call] += d
+        moneyness = (strike / spot - 1) * 100 if call else (1 - strike / spot) * 100   # + = out of the money
+        moves.append({"exp": exp, "call": call, "strike": strike, "change": d, "premium": abs(d) * 100 * mid,
+                      "otmPct": moneyness})
+    big = [m for m in moves if m["premium"] >= OI_MIN_PREMIUM]
+    opened = sorted((m for m in big if m["change"] > 0), key=lambda m: -m["premium"])[:OI_TOP_NEW]
+    closed = sorted((m for m in big if m["change"] < 0), key=lambda m: -m["premium"])[:OI_TOP_CLOSED]
+    return {"stale": moved == 0, "opened": opened, "closed": closed, "netCalls": net[True], "netPuts": net[False]}
+
+
+def contracts(n: float) -> str:
+    sign = "+" if n > 0 else "−" if n < 0 else ""
+    a = abs(n)
+    return f"{sign}{a / 1e6:.2f}M" if a >= 1e6 else f"{sign}{a / 1e3:.1f}K" if a >= 1e3 else f"{sign}{a:.0f}"
+
+
+def oi_line(m: dict, this_year: int) -> str:
+    arrow = "▲" if m["change"] > 0 else "▼"
+    year = "" if m["exp"].year == this_year else f" '{m['exp']:%y}"
+    where = f"{abs(m['otmPct']):.1f}% {'OTM' if m['otmPct'] > 0 else 'ITM'}" if abs(m["otmPct"]) >= 0.05 else "at the money"
+    return (f"{arrow} `{m['exp']:%b} {m['exp'].day}{year} {price_fmt(m['strike']).replace('.00', '')}{'C' if m['call'] else 'P'}` "
+            f"{contracts(m['change'])} · ≈{money_short(m['premium'])} · {where}")
+
+
+def load_snapshot(sym: str) -> dict | None:
+    try:
+        with open(os.path.join(OI_DIR, f"{sym}.json")) as fh:
+            return json.load(fh)
+    except (FileNotFoundError, ValueError):
+        return None
+
+
+def save_snapshot(sym: str, day: dt.date, rows: dict) -> None:
+    if DRY_RUN:
+        return
+    os.makedirs(OI_DIR, exist_ok=True)
+    with open(os.path.join(OI_DIR, f"{sym}.json"), "w") as fh:
+        json.dump({"date": day.isoformat(), "oi": {k: v[3] for k, v in rows.items() if v[3] > 0}}, fh, separators=(",", ":"))
+    state_changed()
+
+
+def task_oi(now: dt.datetime) -> bool:
+    """Post the biggest open-interest changes. False = the new open interest isn't out yet; try again."""
+    today = now.date()
+    if today.isoformat() in fb.MARKET_HOLIDAYS:
+        log("Market holiday: no open-interest changes today")
+        return True
+    results, first, stale, since = [], [], [], set()
+    for sym in OI_TICKERS:
+        try:
+            spot, _, raw = cboe_chain(sym)
+        except Exception as exc:
+            log(f"{sym}: no option chain ({exc})")
+            continue
+        rows = oi_rows(sym, raw, today)
+        prev = load_snapshot(sym)
+        if not prev:
+            first.append((sym, rows))
+            continue
+        if prev.get("date") == today.isoformat():
+            continue
+        ch = oi_changes(spot, rows, prev.get("oi", {}))
+        if ch["stale"]:
+            stale.append(sym)
+            continue
+        since.add(prev["date"])
+        results.append((sym, spot, rows, ch))
+    if stale:
+        log(f"Open interest hasn't updated yet for {', '.join(stale)}; trying again on the next run")
+        return False
+    for sym, rows in first:
+        save_snapshot(sym, today, rows)
+        log(f"{sym}: first snapshot saved; changes start next session")
+    fields = []
+    for sym, spot, rows, ch in results:
+        lines = [oi_line(m, today.year) for m in ch["opened"] + ch["closed"]]
+        if lines:
+            lines.append(f"Net: calls {contracts(ch['netCalls'])} · puts {contracts(ch['netPuts'])} contracts")
+            fields.append({"name": f"{sym} · {price_fmt(spot)}", "value": clip("\n".join(lines), 1024), "inline": False})
+    if fields:
+        prev_day = dt.date.fromisoformat(min(since))
+        embed = {"title": f"📊 Open-interest changes · {now:%a}, {now:%b} {now.day}",
+                 "description": f"The biggest new positions since {prev_day:%a} {prev_day:%b} {prev_day.day}. Open interest "
+                                "updates overnight. It shows contracts opened (▲) or closed (▼), not whether they were "
+                                "bought or sold. ≈ is the premium: contracts × 100 × option price.",
+                 "color": EMBED_COLOR, "fields": fields[:25],
+                 "footer": {"text": f"Data: Cboe (delayed) · {stamp(now)} · {NOT_ADVICE}"}}
+        channel = os.environ.get("ANALYSIS_CHANNEL_ID", "").strip() or ("dry-run" if DRY_RUN else fb.require_env("ANALYSIS_CHANNEL_ID"))
+        discord("POST", f"/channels/{channel}/messages", {"embeds": [embed], "allowed_mentions": {"parse": []}})
+        log(f"Posted open-interest changes for {len(fields)} tickers")
+    for sym, spot, rows, ch in results:
+        save_snapshot(sym, today, rows)
+    return True
+
+
+def state_changed() -> None:
+    """Tell the workflow there's new memory to save (so it doesn't save the cache on every run)."""
+    out = os.environ.get("GITHUB_OUTPUT")
+    if out and not DRY_RUN:
+        with open(out, "a") as fh:
+            fh.write("state_changed=true\n")
+
+
 # ---------------------------------------------------------------- tasks
 
 def task_request(now: dt.datetime) -> bool:
@@ -1583,10 +1747,11 @@ def task_check(now: dt.datetime) -> bool:
 
 
 def auto_due(now: dt.datetime) -> list[str]:
+    due = []
     for days, opens, closes, tasks in AUTO_WINDOWS.values():
         if now.weekday() in days and opens <= (now.hour, now.minute) and now.hour < closes:
-            return list(tasks)
-    return []
+            due += tasks
+    return due
 
 
 def load_posted() -> dict:
@@ -1604,12 +1769,13 @@ def save_posted(posted: dict) -> None:
     cutoff = (dt.date.today() - dt.timedelta(days=14)).isoformat()
     with open(STATE_FILE, "w") as fh:
         json.dump({"posted": {k: v for k, v in posted.items() if v >= cutoff}}, fh, indent=1, sort_keys=True)
+    state_changed()
 
 
 def main() -> int:
     global DRY_RUN
     parser = argparse.ArgumentParser(description="Fiscal analysis posts")
-    parser.add_argument("task", choices=["auto", "weekly", "request", "check-analysis"])
+    parser.add_argument("task", choices=["auto", "weekly", "oi-changes", "request", "check-analysis"])
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--date", help="pretend now is YYYY-MM-DDTHH:MM (New York time)")
     args = parser.parse_args()
@@ -1621,16 +1787,32 @@ def main() -> int:
     if args.task == "check-analysis":
         return 0 if task_check(now) else 1
     posted = load_posted()
-    if args.task == "auto":
-        due = auto_due(now)
-        if not due:
-            log(f"Nothing due at {now:%a %H:%M} ET")
-            return 0
-        if all(posted.get(f"weekly-{s}") == now.date().isoformat() for s in WEEKLY_TICKERS):
+    today = now.date().isoformat()
+    if args.task == "oi-changes":
+        return 0 if task_oi(now) else 1
+    if args.task == "weekly":
+        ok = task_weekly(now, posted)
+        save_posted(posted)
+        return 0 if ok else 1
+    due = auto_due(now)
+    if not due:
+        log(f"Nothing due at {now:%a %H:%M} ET")
+        return 0
+    ok, changed = True, False
+    if "weekly" in due:
+        if all(posted.get(f"weekly-{s}") == today for s in WEEKLY_TICKERS):
             log("Weekly outlook already posted today")
-            return 0
-    ok = task_weekly(now, posted)
-    save_posted(posted)
+        else:
+            ok = task_weekly(now, posted) and ok
+            changed = True
+    if "oi-changes" in due:
+        if posted.get("oi-changes") == today:
+            log("Open-interest changes already done today")
+        elif task_oi(now):
+            posted["oi-changes"] = today
+            changed = True
+    if changed:
+        save_posted(posted)
     return 0 if ok else 1
 
 
