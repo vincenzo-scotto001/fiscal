@@ -131,7 +131,7 @@ You post trades from Discord, on your phone or desktop, with slash commands. The
 | `/close position [price]` | "Sold NVDA ▲ +10.4%" in the channel with a ping, and in the thread. |
 | `/positions` | Your open positions with live moves. Only you can see the reply. |
 
-`position` is a pick-list of your open trades. The commands only appear for you, and the bot refuses anyone else. Each trade gets a number and its own discussion thread.
+`position` is a pick-list of your open trades, labeled with the day each was opened. The commands only appear for you, and the bot refuses anyone else. Each trade gets its own discussion thread. Cards don't show trade numbers.
 The bot runs on **Cloudflare Workers' free plan**, because GitHub can't receive Discord commands in real time. Open positions are stored in Cloudflare, never in this repo. Merging changes under `trade_bot/` redeploys it automatically.
 
 ### One-time setup (about 20 minutes)
@@ -213,6 +213,20 @@ Two commands every member can use, run by the same bot. They use OpenAI (`gpt-6.
 5. **Try it:** `/ask-fiscal What does an inverted yield curve mean?` in #chat.
 
 The commands refuse to post in channels the member can't post in (like #trade and #invest), so read-only channels stay clean. If something goes wrong, the Cloudflare logs show each step, including how long OpenAI took and how many tokens it used.
+
+---
+
+# Alerts: /alert price and /alert earnings
+
+Any member can set alerts, and the bot sends them by DM. If a member's DMs from server members are off, it pings them in the channel where they set the alert instead.
+
+| Command | What it does |
+|---|---|
+| `/alert price NVDA Goes above 200` | DMs once when the price crosses (checked every 5 minutes while the market is open), then the alert is gone. Alerts that never trigger expire after 90 days. |
+| `/alert earnings NVDA` | DMs the trading day before NVDA reports, after the close, with the estimates, and again with the results (EPS and revenue against estimates). Repeats every quarter until removed. |
+| `/alert list` / `/alert remove` | Shows or removes your own alerts (`remove` has a pick-list). |
+
+Members can have 5 alerts; you and Premium get 25. Data comes from Finnhub's free plan, so there's no AI and no cost. The checks run on a Cloudflare cron trigger (every 5 minutes, 13:00–21:55 UTC), which the deploy sets up. Finnhub's market status skips holidays.
 
 ---
 
