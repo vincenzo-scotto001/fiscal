@@ -24,14 +24,17 @@ function memoryKV() {
   };
 }
 
-let env, calls, livePrice, msgCounter, lastResult, finnhubDelay, hangDiscord, askReply, bullBearReply, openaiStatus;
+let env, calls, livePrice, msgCounter, lastResult, finnhubDelay, hangDiscord, askReply, bullBearReply, openaiStatus,
+  githubStatus;
 beforeEach(() => {
   env = {
     DISCORD_PUBLIC_KEY: publicKeyHex, DISCORD_APP_ID: "app1", DISCORD_BOT_TOKEN: "bot-token",
     FINNHUB_API_KEY: "fh", OWNER_ID: OWNER, TRADE_CHANNEL_ID: "trade-ch", INVEST_CHANNEL_ID: "invest-ch",
     TRADE_ROLE_ID: "trade-role", INVEST_ROLE_ID: "invest-role", TRADES: memoryKV(),
     OPENAI_API_KEY: "sk-test", FRED_API_KEY: "fred", PREMIUM_ROLE_ID: "premium-role",
+    GH_DISPATCH_TOKEN: "gh-test", ANALYSIS_CHANNEL_ID: "an-ch", GITHUB_REPO: "owner/fiscal",
   };
+  githubStatus = 204;
   calls = [];
   livePrice = 190.12;
   msgCounter = 0;
@@ -90,6 +93,10 @@ beforeEach(() => {
     }
     if (hangDiscord && call.url.includes("/channels/")) {
       return new Promise((_, reject) => init.signal?.addEventListener("abort", () => reject(new Error("aborted"))));
+    }
+    if (call.url.startsWith("https://api.github.com/")) {
+      call.headers = init.headers;
+      return new Response(githubStatus === 204 ? null : "Bad credentials", { status: githubStatus });
     }
     if (call.url.includes("/webhooks/")) return new Response(null, { status: 200 });
     if (call.method === "PATCH" && call.url.includes("/channels/")) return Response.json({ id: "edited" });
@@ -294,7 +301,7 @@ test("helpers: expiry parsing, dates, prices, results", () => {
 });
 
 test("command definitions follow Discord's rules", () => {
-  const forEveryone = ["ask-fiscal", "bull-bear"];
+  const forEveryone = ["ask-fiscal", "bull-bear", "analysis"];
   assert.deepEqual(COMMANDS.filter((c) => forEveryone.includes(c.name)).map((c) => c.name), forEveryone);
   for (const c of COMMANDS) {
     assert.match(c.name, /^[a-z][a-z-]{0,31}$/);
@@ -563,4 +570,93 @@ test("AI helpers: tickers in a question, the ET date, reading OpenAI's output", 
   assert.equal(etDay(new Date("2026-11-25T05:30:00Z")), "2026-11-25");
   assert.equal(outputText({ output: [{ type: "reasoning" }, { type: "message", content: [{ type: "output_text", text: "{}" }] }] }), "{}");
   assert.throws(() => outputText({ output: [{ type: "message", content: [{ type: "refusal", refusal: "no" }] }] }), /declined/);
+});
+
+// ------------------------------------------------------------------ /analysis and /collar
+
+const dispatches = () => calls.filter((c) => c.url.startsWith("https://api.github.com/"));
+
+test("/analysis: any member; a placeholder goes up in #analysis and the analysis workflow starts", async () => {
+  const day = today();
+  const { data } = await send(aiCommand("analysis", { ticker: "nvda" }));
+  assert.equal(data.data.flags, 64);
+  assert.equal(data.data.content,
+    "Charting NVDA now. It'll be in <#an-ch> in a minute or two: https://discord.com/channels/guild1/an-ch/msg-1");
+  const [card] = posts();
+  assert.ok(card.url.endsWith("/channels/an-ch/messages"), "posts in #analysis, not where it was run");
+  assert.equal(card.body.content, "Requested by <@222>");
+  assert.deepEqual(card.body.allowed_mentions, { parse: [] });
+  assert.equal(card.body.embeds[0].title, "Analysis: NVDA");
+  const [d] = dispatches();
+  assert.equal(d.url, "https://api.github.com/repos/owner/fiscal/actions/workflows/analysis.yml/dispatches");
+  assert.equal(d.headers.Authorization, "Bearer gh-test");
+  assert.deepEqual(d.body, {
+    ref: "main",
+    inputs: {
+      task: "request", ticker: "NVDA", channel_id: "an-ch", message_id: "msg-1", requester: "222",
+      refund: `quota:an:222:${day}|0`, cache_key: `an:NVDA:${day}`, left: "2 of 3 analyses left today",
+    },
+  });
+  assert.ok(!JSON.stringify(d.body).includes("gh-test"), "the token only goes in the header");
+  assert.equal(env.TRADES.m.get(`quota:an:222:${day}`), "1");
+  assert.equal(JSON.parse(env.TRADES.m.get(`an:NVDA:${day}`)).done, false);
+  assert.equal(openaiCalls().length, 0, "the workflow writes it, not the Worker");
+});
+
+test("/analysis: the same ticker today links the first post; 3 a day; typos are caught", async () => {
+  const day = today();
+  await send(aiCommand("analysis", { ticker: "NVDA" }));
+  let { data } = await send(aiCommand("analysis", { ticker: "$NVDA" }, { user: "333" }));
+  assert.match(data.data.content, /being put together right now: https:\/\/discord.com\/channels\/guild1\/an-ch\/msg-1/);
+  env.TRADES.m.set(`an:NVDA:${day}`, JSON.stringify({ url: "https://discord.com/channels/guild1/an-ch/msg-1", at: Date.now(), done: true }));
+  ({ data } = await send(aiCommand("analysis", { ticker: "NVDA" }, { user: "333" })));
+  assert.equal(data.data.content, "Today's NVDA analysis is already up: https://discord.com/channels/guild1/an-ch/msg-1");
+  assert.ok(!env.TRADES.m.has(`quota:an:333:${day}`));
+  for (const t of ["AAPL", "MSFT"]) await send(aiCommand("analysis", { ticker: t }));
+  ({ data } = await send(aiCommand("analysis", { ticker: "AMD" })));
+  assert.match(data.data.content, /used your 3 analyses for today/);
+  assert.equal(dispatches().length, 3);
+  livePrice = 0;
+  ({ data } = await send(aiCommand("analysis", { ticker: "ZZZZ" }, { user: "444" })));
+  assert.match(data.data.content, /No market data found for ZZZZ/);
+  ({ data } = await send(aiCommand("analysis", { ticker: "SPX" }, { user: "444" })));
+  assert.match(data.data.content, /Charting SPX now/, "indexes skip the stock-quote check");
+  assert.equal(dispatches().length, 4);
+});
+
+test("/analysis: if the workflow can't start, the placeholder says so and nothing counts", async () => {
+  const day = today();
+  githubStatus = 401;
+  await send(aiCommand("analysis", { ticker: "NVDA" }));
+  const [edit] = patches();
+  assert.ok(edit.url.endsWith("/channels/an-ch/messages/msg-1"));
+  assert.match(edit.body.embeds[0].description, /Couldn't start this one right now\. It didn't count/);
+  assert.ok(!env.TRADES.m.has(`quota:an:222:${day}`));
+  assert.ok(!env.TRADES.m.has(`an:NVDA:${day}`));
+});
+
+test("/analysis stays off until the dispatch token and #analysis channel are set", async () => {
+  delete env.GH_DISPATCH_TOKEN;
+  const { data } = await send(aiCommand("analysis", { ticker: "NVDA" }));
+  assert.match(data.data.content, /isn't switched on yet/);
+  assert.equal(posts().length, 0);
+});
+
+test("/collar: the owner saves, shows and clears the JPM collar; members can't", async () => {
+  let { data } = await send(command("collar", { call: 6020, put: 5245, put_low: 4580, expiry: "Dec 31" }));
+  assert.match(data.data.content, /^Saved the JPM collar: short 6020 call \+ long 5245 \/ short 4580 put spread, expiring \w{3}, Dec 31/);
+  const saved = JSON.parse(env.TRADES.m.get("collar"));
+  assert.equal(saved.call, 6020);
+  assert.equal(saved.putLow, 4580);
+  assert.match(saved.expiry, /^\d{4}-12-31$/);
+  ({ data } = await send(command("collar", {})));
+  assert.match(data.data.content, /^JPM collar in use: short 6020 call/);
+  ({ data } = await send(command("collar", { call: 5000, put: 5245, expiry: "Dec 31" })));
+  assert.match(data.data.content, /call strike should be above the put strike/);
+  ({ data } = await send(command("collar", { call: 6020, put: 5245, expiry: "Dec 31" }, MEMBER)));
+  assert.match(data.data.content, /Only the server owner/);
+  ({ data } = await send(command("collar", { clear: true })));
+  assert.match(data.data.content, /^Cleared the JPM collar/);
+  assert.ok(!env.TRADES.m.has("collar"));
+  assert.equal(posts().length, 0, "/collar never posts in a channel");
 });

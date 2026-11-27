@@ -1,0 +1,126 @@
+name: Fiscal analysis
+
+# Deep technical + options positioning posts for #analysis (analysis_bot.py).
+#  - auto: the Monday outlook (SPX and NDX), once, from 8:37 AM New York time. The Fiscal ticker
+#    asks for this every ~30 minutes; the cron lines below are backups.
+#  - request: one /analysis from Discord. The bot starts these itself and fills in the inputs.
+#  - check-analysis: shows what the data sources return and saves the charts as an artifact
+#    (posts nothing, doesn't call OpenAI). Run this first.
+run-name: ${{ inputs.task == 'request' && format('Analysis {0}', inputs.ticker) || format('Analysis {0}', inputs.task || 'auto') }}
+
+on:
+  schedule:
+    # UTC, no timezone key (GitHub ignored it on this repo). Covers the Monday window in both
+    # winter (EST) and summer (EDT) time; analysis_bot only posts inside the window, once a day.
+    - cron: '7,22,37,52 12-16 * * 1'
+  workflow_dispatch:
+    inputs:
+      task:
+        description: 'What to run'
+        type: choice
+        default: check-analysis
+        options:
+          - check-analysis
+          - weekly
+          - auto
+          - request
+      dry_run:
+        description: 'Preview only (prints the message, saves the charts as an artifact, posts nothing)'
+        type: boolean
+        default: false
+      ticker:
+        description: 'request only: filled in by the bot'
+        required: false
+      channel_id:
+        description: 'request only: filled in by the bot'
+        required: false
+      message_id:
+        description: 'request only: filled in by the bot'
+        required: false
+      requester:
+        description: 'request only: filled in by the bot'
+        required: false
+      refund:
+        description: 'request only: filled in by the bot'
+        required: false
+      cache_key:
+        description: 'request only: filled in by the bot'
+        required: false
+      left:
+        description: 'request only: filled in by the bot'
+        required: false
+
+permissions:
+  contents: read
+
+# Requests run side by side; scheduled runs take turns so the outlook can't post twice.
+concurrency:
+  group: fiscal-analysis-${{ inputs.task == 'request' && inputs.message_id || 'scheduled' }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # Remembers which weekly posts went out today, so the backups don't post twice.
+      - name: Restore memory
+        if: inputs.task != 'request'
+        uses: actions/cache/restore@v4
+        with:
+          path: .state
+          key: analysis-state-${{ github.run_id }}
+          restore-keys: analysis-state-
+
+      - name: Run analysis
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          MASSIVE_API_KEY: ${{ secrets.MASSIVE_API_KEY }}
+          ANALYSIS_CHANNEL_ID: ${{ vars.ANALYSIS_CHANNEL_ID }}
+          DISCORD_GUILD_ID: ${{ vars.DISCORD_GUILD_ID }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+          EVENT: ${{ github.event_name }}
+          TASK: ${{ inputs.task }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+          TICKER: ${{ inputs.ticker }}
+          CHANNEL_ID: ${{ inputs.channel_id }}
+          MESSAGE_ID: ${{ inputs.message_id }}
+          REQUESTER: ${{ inputs.requester }}
+          REFUND: ${{ inputs.refund }}
+          CACHE_KEY: ${{ inputs.cache_key }}
+          LEFT: ${{ inputs.left }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            python analysis_bot.py "$TASK"
+          else
+            python analysis_bot.py auto
+          fi
+
+      - name: Save the charts (check-analysis and dry runs)
+        if: always() && (inputs.task == 'check-analysis' || inputs.dry_run)
+        uses: actions/upload-artifact@v4
+        with:
+          name: analysis-charts
+          path: dry-run-output
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Save memory
+        if: always() && inputs.task != 'request'
+        uses: actions/cache/save@v4
+        with:
+          path: .state
+          key: analysis-state-${{ github.run_id }}

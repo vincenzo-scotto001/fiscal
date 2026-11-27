@@ -1,8 +1,8 @@
 name: Fiscal ticker
 
 # Keeps the bots checking every ~30 minutes without relying on GitHub's scheduler, which skips
-# most scheduled runs on this repo. Each tick asks "Fiscal feeds" and "Fiscal media feeds" to
-# post whatever is due (task: auto), and queues the next tick. That next tick first waits
+# most scheduled runs on this repo. Each tick asks "Fiscal feeds", "Fiscal media feeds" and
+# "Fiscal analysis" to post whatever is due (task: auto), and queues the next tick. That next tick first waits
 # 30 minutes in the "ticker-30m" environment (Settings > Environments > ticker-30m, wait timer
 # 30 minutes). Wait timers only work on public repos on the Free plan, so the loop stops itself
 # if the repo is made private.
@@ -68,3 +68,7 @@ jobs:
       - name: Media feeds (posts only what's new)
         if: ${{ !cancelled() }}
         run: gh workflow run feeds.yml --ref main -f task=auto
+
+      - name: Analysis (the Monday outlook, only when it's due)
+        if: ${{ !cancelled() }}
+        run: gh workflow run analysis.yml --ref main -f task=auto

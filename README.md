@@ -216,10 +216,45 @@ The commands refuse to post in channels the member can't post in (like #trade an
 
 ---
 
+# Fiscal analysis: #analysis
+
+Deep technical and options positioning posts, written in the style of your own #analysis posts (`analysis_bot.py`, run by the **Fiscal analysis** workflow).
+
+| When | What |
+|---|---|
+| Mondays from 8:37 AM ET | SPX and NDX outlooks for the week and the run into OpEx |
+| `/analysis TICKER` (any member) | The same post for any US stock, ETF or index (SPX, NDX, RUT), in #analysis a minute or two later. The member gets a link. 3 a day; you and Premium are unlimited; a ticker already done today just links that post. |
+| `/collar` (you only) | Saves the JPM collar strikes after each quarter-end roll, e.g. `/collar call:6020 put:5245 put_low:4580 expiry:Dec 31`. The SPX posts factor it in. `/collar` alone shows it; `clear:True` removes it. |
+
+**Each post:** IMG 1 is the daily chart: candles, EMA 21/50/200, Fibonacci retracements and extensions from the last 6-month swing, trendlines, volume, MACD and RSI. IMG 2 is options positioning: estimated dealer gamma and open interest by strike through the next monthly OpEx, with spot, the call wall, the put wall and the gamma flip marked. The text follows your structure: a capitals header, IMG 1, IMG 2, fundamentals for stocks, key levels as if/then lines, and a conclusion timeline (this week → OpEx → the next big date).
+
+**Where the numbers come from:** everything is calculated by the bot before the AI sees it. That covers EMAs, MACD, RSI, TTM squeeze, Bollinger %B and ATR on the daily and weekly; Fibonacci levels, trendlines, yearly and monthly pivots and the volume profile; relative strength against SPY; seasonality; and from the option chain, gamma and delta exposure, walls, the flip, max pain and the expected move. Price history comes from Cboe's free delayed data (Yahoo Finance as a backup, plus Massive if you add a free `MASSIVE_API_KEY`). Option chains come from Cboe (delayed about 15 minutes; open interest is as of the prior close). If an index's chain can't be read, its ETF stands in (SPY for SPX, QQQ for NDX) and the post says so.
+
+**Rules the AI follows (your call: "avoid any problems"):** levels and if/then scenarios only. Upside and downside levels are named technical levels from the data ("the Fib 161.8% extension at 173.57"). No "PT" or price targets, no firm predictions, no buy or sell calls, no first-person trades, no @here. Positioning is described as an estimate. The bot checks every draft for these and for numbers that aren't in the data. It asks for one rewrite if needed, and refuses to post a draft that breaks the rules twice.
+
+**Cost:** about 3–5 cents per post (deeper reasoning than /ask-fiscal), counted in the same `AI_DAILY_CAP`.
+
+### Setup (about 10 minutes)
+1. **#analysis channel:** in Discord, right-click #analysis → **Copy Channel ID**. Make sure the Fiscal bot can View Channel, Send Messages, Embed Links and Attach Files there.
+2. **A token so /analysis can start the workflow:** on GitHub, profile picture → Settings → Developer settings → Personal access tokens → **Fine-grained tokens** → Generate new token. Set Repository access to *Only select repositories* → **fiscal**, and under Repository permissions set **Actions: Read and write** (nothing else). Pick an expiry (up to a year) and note the date, because /analysis stops when it expires.
+3. **Add them to GitHub** (Settings → Secrets and variables → Actions):
+
+| Tab | Name | Value |
+|---|---|---|
+| Secrets | `GH_DISPATCH_TOKEN` | the fine-grained token |
+| Variables | `ANALYSIS_CHANNEL_ID` | the #analysis channel ID |
+| Secrets (optional) | `MASSIVE_API_KEY` | a free massive.com key, as a backup for stock prices |
+
+4. **Check the data first:** Actions → **Fiscal analysis** → Run workflow → task **check-analysis**. The log shows what each source returned for SPX, NDX and NVDA, and the charts are saved under **Artifacts → analysis-charts** at the bottom of the run page. Nothing is posted.
+5. **Preview a full post:** run task **weekly** with **Preview only** ticked. The log shows the write-up and the artifact has the charts.
+6. **Merge** to deploy; the bot then registers `/analysis` and `/collar`. If you add the token after merging, run Actions → **Deploy trade bot** again.
+
+---
+
 ## Making changes
 Work on a branch and open a pull request instead of pushing to `main`.
-Before opening it, run `python tests/test_offline.py`, `python tests/test_feeds_offline.py`, and `node --test` inside `trade_bot/`. They run every post type and command against sample data.
+Before opening it, run `python tests/test_offline.py`, `python tests/test_feeds_offline.py`, `python tests/test_analysis_offline.py`, and `node --test` inside `trade_bot/`. They run every post type and command against sample data.
 
 ## Cost
 $0, because the repo is public and GitHub Actions is free for public repos. **Keep it public:** the 15-minute checks add up to about 4,000 runs a month, well over the 2,000 free minutes a private repo gets. If it ever goes private, change the media feeds back to hourly (`23 * * * *`) and give each fiscal post just one or two chances.
-Finnhub's free key and CoinGecko's free tier are meant for personal, non-commercial use. Revisit both before Fiscal adds a paid tier.
+Finnhub's free key, CoinGecko's free tier, and Cboe's and Yahoo's free delayed data are meant for personal, non-commercial use. Revisit them before Fiscal adds a paid tier.

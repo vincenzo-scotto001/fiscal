@@ -13,14 +13,17 @@ const VARS = [
   "TRADE_CHANNEL_ID", "INVEST_CHANNEL_ID", "TRADE_ROLE_ID", "INVEST_ROLE_ID",
 ];
 const SECRETS = ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "DISCORD_BOT_TOKEN", "FINNHUB_API_KEY"];
-// Fiscal AI settings. All optional: without OPENAI_API_KEY the AI commands just say they're off.
-const OPTIONAL_VARS = ["PREMIUM_ROLE_ID", "AI_DAILY_CAP", "OPENAI_MODEL"];
+// Fiscal AI and /analysis settings. All optional: without OPENAI_API_KEY the AI commands say they're
+// off, and /analysis stays off without GH_DISPATCH_TOKEN and ANALYSIS_CHANNEL_ID.
+const OPTIONAL_VARS = ["PREMIUM_ROLE_ID", "AI_DAILY_CAP", "OPENAI_MODEL", "ANALYSIS_CHANNEL_ID", "GITHUB_REPO"];
 const KV_TITLE = "fiscal-trade-bot-positions";
 
 const GITHUB_NAME = { OWNER_ID: "DISCORD_OWNER_ID" }; // the name used in GitHub > Settings > Variables
 
 const env = process.env;
 const blank = (k) => !String(env[k] || "").trim();
+// /analysis starts the "Fiscal analysis" workflow in this repo (Actions sets GITHUB_REPOSITORY).
+if (blank("GITHUB_REPO") && env.GITHUB_REPOSITORY) env.GITHUB_REPO = env.GITHUB_REPOSITORY;
 const missingVars = VARS.filter(blank).map((k) => GITHUB_NAME[k] || k);
 const missingSecrets = SECRETS.filter(blank);
 const ready = missingVars.length === 0 && missingSecrets.length === 0;
@@ -38,6 +41,9 @@ if (process.argv.includes("--check")) {
   }
   if (blank("FRED_API_KEY")) console.log("::notice::No FRED_API_KEY secret, so /ask-fiscal answers without economic data.");
   if (blank("PREMIUM_ROLE_ID")) console.log("::notice::No PREMIUM_ROLE_ID variable yet, so only you get unlimited Fiscal AI.");
+  if (blank("GH_DISPATCH_TOKEN") || blank("ANALYSIS_CHANNEL_ID")) {
+    console.log("::notice::/analysis stays off until the GH_DISPATCH_TOKEN secret and the ANALYSIS_CHANNEL_ID variable are added. See README > Fiscal analysis.");
+  }
   process.exit(0);
 }
 if (!ready) {

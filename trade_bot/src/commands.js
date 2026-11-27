@@ -1,7 +1,7 @@
 // Slash command definitions. scripts/register-commands.mjs sends these to Discord on deploy.
 // Option types: 3 = text, 10 = number. The trade commands have default_member_permissions "0",
 // which hides them from everyone except server admins (the worker also checks it's the owner).
-// The Fiscal AI commands at the end are for every member.
+// The Fiscal AI commands and /analysis at the end are for every member; /collar is the owner's.
 
 const STYLE_CHOICES = [
   { name: "Day trade", value: "day" },
@@ -88,5 +88,22 @@ export const COMMANDS = [
     name: "bull-bear",
     description: "Post 3 bull and 3 bear points for a stock (3 a day, unlimited for Premium)",
     options: [{ ...ticker }],
+  },
+  {
+    name: "analysis",
+    description: "Deep chart + options positioning analysis, posted in #analysis (3 a day, unlimited for Premium)",
+    options: [{ ...ticker, description: "Ticker, e.g. NVDA, or an index: SPX, NDX, RUT" }],
+  },
+  {
+    name: "collar",
+    description: "Set the JPM collar strikes the SPX analysis uses (after each quarter-end roll)",
+    default_member_permissions: "0",
+    options: [
+      { type: 10, name: "call", description: "Short call strike, e.g. 6020", required: false, min_value: 1 },
+      { type: 10, name: "put", description: "Long put strike, e.g. 5245", required: false, min_value: 1 },
+      { type: 10, name: "put_low", description: "Lower strike of the put spread, e.g. 4580", required: false, min_value: 1 },
+      { type: 3, name: "expiry", description: "Expiry, e.g. Dec 31", required: false },
+      { type: 5, name: "clear", description: "Remove the saved collar", required: false },
+    ],
   },
 ];
