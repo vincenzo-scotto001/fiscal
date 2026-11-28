@@ -1,7 +1,7 @@
 // Slash command definitions. scripts/register-commands.mjs sends these to Discord on deploy.
 // Option types: 3 = text, 10 = number. The trade commands have default_member_permissions "0",
 // which hides them from everyone except server admins (the worker also checks it's the owner).
-// The Fiscal AI commands and /analysis at the end are for every member; /collar is the owner's.
+// The Fiscal AI commands, /analysis and /alert at the end are for every member; /collar is the owner's.
 
 const STYLE_CHOICES = [
   { name: "Day trade", value: "day" },
@@ -104,6 +104,32 @@ export const COMMANDS = [
       { type: 10, name: "put_low", description: "Lower strike of the put spread, e.g. 4580", required: false, min_value: 1 },
       { type: 3, name: "expiry", description: "Expiry, e.g. Dec 31", required: false },
       { type: 5, name: "clear", description: "Remove the saved collar", required: false },
+    ],
+  },
+  {
+    name: "alert",
+    description: "Price and earnings alerts, sent to you by DM",
+    options: [
+      {
+        type: 1, name: "price", description: "DM me when a stock goes above or below a price",
+        options: [
+          { ...ticker },
+          {
+            type: 3, name: "when", description: "Above or below", required: true,
+            choices: [{ name: "Goes above", value: "above" }, { name: "Goes below", value: "below" }],
+          },
+          { type: 10, name: "price", description: "The price to watch for, e.g. 200", required: true, min_value: 0.0001 },
+        ],
+      },
+      {
+        type: 1, name: "earnings", description: "DM me the day before a company reports, and its results",
+        options: [{ ...ticker }],
+      },
+      { type: 1, name: "list", description: "Show my alerts" },
+      {
+        type: 1, name: "remove", description: "Remove one of my alerts",
+        options: [{ type: 3, name: "alert", description: "Pick an alert", required: true, autocomplete: true }],
+      },
     ],
   },
 ];

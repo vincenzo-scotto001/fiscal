@@ -1,8 +1,10 @@
 // Fiscal bot: Discord slash commands on Cloudflare Workers (free plan).
 //  - Trade alerts (owner only): post trades to #trade and long-term holds to #invest. Open
-//    positions live in Workers KV (binding TRADES), never in the GitHub repo.
+//    positions live in Workers KV (binding TRADES), never in the GitHub repo. Cards show no trade
+//    numbers (the owner's call); each position keeps an internal id for storage.
 //  - Fiscal AI (everyone): /ask-fiscal and /bull-bear, in ai.js, and /analysis, in analysis.js
 //    (the owner's /collar for the SPX analysis lives there too).
+//  - Alerts (everyone): /alert price and /alert earnings, in alerts.js, checked by a cron trigger.
 //
 // Trade card rule: show what was bought or sold, the price in, the price out and the result in %.
 // Never show position size, share count or contract count.
@@ -13,6 +15,7 @@ import {
 } from "./shared.js";
 import { AI_COMMANDS, handleAiCommand } from "./ai.js";
 import { requestAnalysis, setCollar } from "./analysis.js";
+import { handleAlert, alertChoices, runAlerts } from "./alerts.js";
 
 export { usd, cleanTicker, fmtDate };
 
@@ -38,8 +41,10 @@ export default {
     const userId = interaction.member?.user?.id || interaction.user?.id;
     const isOwner = Boolean(userId) && userId === String(env.OWNER_ID);
 
-    if (interaction.type === 4) { // autocomplete for the "position" option
-      const choices = isOwner ? await positionChoices(env, focusedValue(interaction)) : [];
+    if (interaction.type === 4) { // autocomplete: the owner's positions, or a member's own alerts
+      const choices = interaction.data?.name === "alert"
+        ? await alertChoices(env, userId, focusedValue(interaction))
+        : isOwner ? await positionChoices(env, focusedValue(interaction)) : [];
       return json({ type: 8, data: { choices } });
     }
     if (interaction.type !== 2) return reply("That action isn't supported.");
@@ -47,7 +52,7 @@ export default {
     // Fiscal AI and /analysis are for every member; everything else is the owner's alone.
     const name = interaction.data?.name;
     const isAi = AI_COMMANDS.has(name);
-    const forMembers = isAi || name === "analysis";
+    const forMembers = isAi || name === "analysis" || name === "alert";
     if (!forMembers && !isOwner) return reply("Only the server owner can post trades.");
 
     // Do the work, and answer directly if it finishes in time. Only slow commands fall back to
@@ -56,6 +61,7 @@ export default {
     // longer, like the AI's answer, comes back as `later` and runs after the reply.
     log("command", { name });
     const work = (name === "analysis" ? requestAnalysis(interaction, env, { isOwner })
+      : name === "alert" ? handleAlert(interaction, env, { isOwner })
       : isAi ? handleAiCommand(interaction, env, { isOwner })
         : handleCommand(interaction, env).then((message) => ({ message }))
     ).catch((err) => {
@@ -79,6 +85,12 @@ export default {
       if (result.later) await runLater(name, result.later);
     }));
     return json({ type: 5, data: { flags: EPHEMERAL } });
+  },
+
+  // Cloudflare's cron trigger (every 5 minutes; see scripts/prepare-deploy.mjs) checks the alerts.
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runAlerts(env, new Date(event.scheduledTime || Date.now()))
+      .catch((err) => log("alerts run failed", { error: String(err.message || err) })));
   },
 };
 
@@ -154,7 +166,7 @@ async function openPosition(env, p) {
     pos.threadId = null; // the alert is still posted; discussion just won't have its own thread
   }
   await env.TRADES.put(`pos:${pos.id}`, JSON.stringify(pos));
-  return `Posted: ${openTitle(pos)} at ${usd(entry)} (${bookLabel(pos)} #${number}) in <#${channelId}>.`;
+  return `Posted: ${openTitle(pos)} at ${usd(entry)} in <#${channelId}>.`;
 }
 
 async function trimPosition(env, id, price) {
@@ -166,7 +178,7 @@ async function trimPosition(env, id, price) {
     title: `${verb} ${contractName(pos)}`,
     description: `${verb === "Trimmed" ? "Trimmed" : "Covered part"} at **${usd(exit)}** · ${signed(pct)} from ${usd(pos.entry)}`,
     color: COLORS.note,
-    footer: { text: `${bookLabel(pos)} #${pos.number} · Still open · ${NOT_ADVICE}` },
+    footer: { text: `Still open · ${NOT_ADVICE}` },
     timestamp: new Date().toISOString(),
   };
   await discord(env, "POST", `/channels/${pos.threadId || pos.channelId}/messages`,
@@ -191,7 +203,7 @@ async function closePosition(env, id, price) {
     title: `${closeTitle(pos)} ${pct >= 0 ? "▲" : "▼"} ${signed(pct)}`,
     description: lines.join("\n"),
     color: pct >= 0 ? COLORS.win : COLORS.loss,
-    footer: { text: `${bookLabel(pos)} #${pos.number} · ${NOT_ADVICE}` },
+    footer: { text: NOT_ADVICE },
     timestamp: new Date().toISOString(),
   };
   const roleId = pos.book === "hold" ? env.INVEST_ROLE_ID : env.TRADE_ROLE_ID;
@@ -215,7 +227,7 @@ async function listPositions(env) {
       const live = await quote(env, pos.ticker).catch(() => null);
       if (live) now = ` · now ${usd(live)} (${signed(resultPct(pos, live))})`;
     }
-    lines.push(`**${bookLabel(pos)} #${pos.number}** ${openTitle(pos)} · in at ${usd(pos.entry)}${now}`);
+    lines.push(`• ${openTitle(pos)} · in at ${usd(pos.entry)} on ${shortDay(pos.openedAt)}${now}`);
   }
   return lines.join("\n").slice(0, 1900);
 }
@@ -252,7 +264,7 @@ async function getPosition(env, id) {
 async function positionChoices(env, typed) {
   const needle = (typed || "").toLowerCase();
   return (await openPositions(env))
-    .map((pos) => ({ name: `#${pos.number} ${openTitle(pos)} · in at ${usd(pos.entry)}`.slice(0, 100), value: pos.id }))
+    .map((pos) => ({ name: `${openTitle(pos)} · in at ${usd(pos.entry)} · ${shortDay(pos.openedAt)}`.slice(0, 100), value: pos.id }))
     .filter((c) => !needle || c.name.toLowerCase().includes(needle))
     .slice(0, 25);
 }
@@ -293,7 +305,7 @@ function openEmbed(pos, underlying) {
     title: openTitle(pos),
     description: lines.join("\n"),
     color: pos.book === "hold" ? COLORS.hold : bearish ? COLORS.short : COLORS.long,
-    footer: { text: `${bookLabel(pos)} #${pos.number} · ${NOT_ADVICE}` },
+    footer: { text: NOT_ADVICE },
     timestamp: pos.openedAt,
   };
 }
@@ -302,11 +314,12 @@ function threadName(pos) {
   const what = pos.kind === "option"
     ? `${pos.ticker} $${trimNum(pos.option.strike)}${pos.option.type === "call" ? "C" : "P"}`
     : `${pos.ticker} ${pos.book === "hold" ? "hold" : pos.side}`;
-  return `${what} · #${pos.number}`;
+  return `${what} · ${shortDay(pos.openedAt)}`;
 }
 
-function bookLabel(pos) {
-  return pos.book === "hold" ? "Hold" : "Trade";
+// Trades are told apart by the day they were opened ("Nov 24"); the internal id stays in storage only.
+function shortDay(iso) {
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" });
 }
 
 function withPing(roleId, embed) {
@@ -350,7 +363,15 @@ export function parseExpiry(raw, today = new Date()) {
 }
 
 function focusedValue(interaction) {
-  return (interaction.data?.options || []).find((o) => o.focused)?.value || "";
+  const find = (opts) => {
+    for (const o of opts || []) {
+      if (o.focused) return o.value;
+      const inner = find(o.options); // subcommands nest their options
+      if (inner !== undefined) return inner;
+    }
+    return undefined;
+  };
+  return find(interaction.data?.options) || "";
 }
 
 // ------------------------------------------------------------------ outside services

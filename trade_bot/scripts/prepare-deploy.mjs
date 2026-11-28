@@ -86,6 +86,11 @@ INVEST_CHANNEL_ID = ${q(env.INVEST_CHANNEL_ID)}
 TRADE_ROLE_ID = ${q(env.TRADE_ROLE_ID)}
 INVEST_ROLE_ID = ${q(env.INVEST_ROLE_ID)}
 ${OPTIONAL_VARS.filter((k) => !blank(k)).map((k) => `${k} = ${q(env[k])}\n`).join("")}
+# /alert checks: every 5 minutes, 13:00-21:55 UTC (covers 9:00 AM-4:55 PM ET in winter and summer).
+# alerts.js works out market hours and skips weekends itself.
+[triggers]
+crons = ["*/5 13-21 * * *"]
+
 # Keep logs so problems can be traced: Workers & Pages > fiscal-trade-bot > Logs.
 [observability]
 enabled = true
