@@ -7,6 +7,7 @@ on:
     # winter (EST) and summer (EDT) time. fiscal_bot only posts inside the right New York window
     # and remembers what it already posted today, so nothing doubles.
     - cron: '11,26,41,56 11-16 * * 1-5'   # morning brief + earnings today (window 7:41 AM-noon ET)
+    - cron: '7,22,37,52 20-23 * * 1-5'    # market wrap (window 4:22-8 PM ET)
     - cron: '7,22,37,52 0-4 * * 2-6'      # earnings results, evening before in ET (window 8:07 PM-midnight ET)
     - cron: '7,22,37,52 22-23 * * 0'      # Sunday week ahead (window 6:07 PM-midnight ET)
     - cron: '7,22,37,52 0-4 * * 1'        # Sunday week ahead, later Sunday evening in ET
@@ -24,6 +25,7 @@ on:
           - earnings-results
           - macro-week
           - macro-morning
+          - market-wrap
           - auto
       dry_run:
         description: 'Preview only (prints the message in the log, posts nothing)'
